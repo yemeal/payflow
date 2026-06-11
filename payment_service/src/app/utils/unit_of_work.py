@@ -6,17 +6,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger()
 
+
 class AsyncUOWProtocol(Protocol):
-    async def __aenter__(self) -> "AsyncUOWProtocol":
-        ...
+    async def __aenter__(self) -> "AsyncUOWProtocol": ...
 
     async def __aexit__(
-            self,
-            exc_type: type[BaseException] | None,
-            exc_val: BaseException | None,
-            exc_tb: TracebackType | None,
-    ) -> None:
-        ...
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None: ...
 
 
 class SQLAlchemyAsyncUOW:
@@ -28,10 +27,10 @@ class SQLAlchemyAsyncUOW:
         return self
 
     async def __aexit__(
-            self,
-            exc_type: type[BaseException] | None,
-            exc_val: BaseException | None,
-            exc_tb: TracebackType | None,
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
     ) -> None:
         try:
             if exc_type is None:
@@ -43,6 +42,3 @@ class SQLAlchemyAsyncUOW:
             raise
         finally:
             logger.debug("uow_exit")
-
-
-

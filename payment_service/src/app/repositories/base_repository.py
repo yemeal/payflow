@@ -4,18 +4,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class AsyncRepositoryProtocol[EntityT](Protocol):
-    async def create(self, entity: EntityT) -> EntityT:
-        ...
+    async def create(self, entity: EntityT) -> EntityT: ...
 
-    async def get(self, entity_id: str | int) -> EntityT | None:
-        ...
+    async def get(self, entity_id: str | int) -> EntityT | None: ...
 
 
 class SQLAlchemyAsyncRepository[EntityT]:
     def __init__(
-            self,
-            session: AsyncSession,
-            model: type[EntityT],
+        self,
+        session: AsyncSession,
+        model: type[EntityT],
     ) -> None:
         self._session = session
         self._model = model

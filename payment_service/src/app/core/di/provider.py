@@ -12,12 +12,16 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.settings import Settings, get_settings
 from app.models import Payment
-from app.repositories.payment_repository import PaymentRepository, PaymentRepositoryProtocol
+from app.repositories.payment_repository import (
+    PaymentRepository,
+    PaymentRepositoryProtocol,
+)
 from app.services.idempotency import IdempotencyService
 from app.services.payment_service import PaymentService, PaymentServiceProtocol
 from app.utils.unit_of_work import SQLAlchemyAsyncUOW, AsyncUOWProtocol
 
 logger = structlog.get_logger()
+
 
 class SettingsProvider(Provider):
     @provide(scope=Scope.APP)
@@ -76,17 +80,21 @@ class ServiceProvider(Provider):
         return SQLAlchemyAsyncUOW(session)
 
     @provide(scope=Scope.REQUEST)
-    def provide_payment_repository(self, session: AsyncSession) -> PaymentRepositoryProtocol:
+    def provide_payment_repository(
+        self, session: AsyncSession
+    ) -> PaymentRepositoryProtocol:
         return PaymentRepository(session, Payment)
 
     @provide(scope=Scope.REQUEST)
     def provide_payment_service(
-            self,
-            repo: PaymentRepositoryProtocol,
-            uow: AsyncUOWProtocol,
+        self,
+        repo: PaymentRepositoryProtocol,
+        uow: AsyncUOWProtocol,
     ) -> PaymentServiceProtocol:
         return PaymentService(repo, uow)
 
     @provide(scope=Scope.REQUEST)
-    def provide_idempotency_service(self, redis: Redis, settings: Settings) -> IdempotencyService:
+    def provide_idempotency_service(
+        self, redis: Redis, settings: Settings
+    ) -> IdempotencyService:
         return IdempotencyService(redis, settings)

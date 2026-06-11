@@ -11,22 +11,22 @@ from app.utils.unit_of_work import AsyncUOWProtocol
 
 logger = structlog.get_logger()
 
+
 class PaymentServiceProtocol(Protocol):
-    async def create(self, payment: Payment) -> Payment:
-        ...
+    async def create(self, payment: Payment) -> Payment: ...
 
-    async def get(self, payment_id: str) -> Payment | None:
-        ...
+    async def get(self, payment_id: str) -> Payment | None: ...
 
-    def build_idempotency_db_lookup(self) -> Callable[[str], Awaitable[IdempotencyCachedResult | None]]:
-        ...
+    def build_idempotency_db_lookup(
+        self,
+    ) -> Callable[[str], Awaitable[IdempotencyCachedResult | None]]: ...
 
 
 class PaymentService:
     def __init__(
-            self,
-            payment_repository: PaymentRepositoryProtocol,
-            uow: AsyncUOWProtocol,
+        self,
+        payment_repository: PaymentRepositoryProtocol,
+        uow: AsyncUOWProtocol,
     ) -> None:
         self._payment_repository = payment_repository
         self._uow = uow
@@ -56,17 +56,23 @@ class PaymentService:
             raise PaymentNotFoundError(f"Платеж с id={payment_id} не существует")
         return payment
 
-    def build_idempotency_db_lookup(self) -> Callable[[str], Awaitable[IdempotencyCachedResult | None]]:
+    def build_idempotency_db_lookup(
+        self,
+    ) -> Callable[[str], Awaitable[IdempotencyCachedResult | None]]:
         """
         создает callback для IdempotencyGuard - поиск платежа по клбючу идемпотентности
         замыкание захватывает self._payment_repository
         """
+
         async def lookup(key: str) -> IdempotencyCachedResult | None:
             payment = await self._payment_repository.find_by_idempotency_key(key)
             if payment is None:
                 return None
             return IdempotencyCachedResult(
                 status_code=201,
-                response=PaymentResponse.model_validate(payment).model_dump(mode="json"),
+                response=PaymentResponse.model_validate(payment).model_dump(
+                    mode="json"
+                ),
             )
+
         return lookup

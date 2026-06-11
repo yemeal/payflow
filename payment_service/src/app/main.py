@@ -6,7 +6,12 @@ from dishka import make_async_container
 from dishka.integrations.fastapi import setup_dishka
 from fastapi import FastAPI
 
-from app.core.di.provider import SettingsProvider, DatabaseProvider, RedisProvider, ServiceProvider
+from app.core.di.provider import (
+    SettingsProvider,
+    DatabaseProvider,
+    RedisProvider,
+    ServiceProvider,
+)
 from app.core.logging import setup_logging
 from app.core.middleware.request_id import RequestIdMiddleware
 from app.api import api_router

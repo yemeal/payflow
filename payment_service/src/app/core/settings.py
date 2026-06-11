@@ -58,7 +58,6 @@ class Settings(BaseSettings):
     #         return [logger.strip() for logger in v.split(",") if logger.strip()]
     #     return v
 
-
     # --- redis ---
     REDIS_HOST: str
     REDIS_PORT: int
@@ -68,10 +67,12 @@ class Settings(BaseSettings):
     def REDIS_URL(self) -> str:
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
-
     # --- idempotency --
     IDEMPOTENCY_LOCK_TTL: int = 60  # время жизни лока в секундах (по дефолту 60)
-    IDEMPOTENCY_RESULT_TTL: int = 48*60*60  # какое количество времени результат хранится в кеше
+    IDEMPOTENCY_RESULT_TTL: int = (
+        48 * 60 * 60
+    )  # какое количество времени результат хранится в кеше
+
 
 @cache
 def get_settings() -> Settings:

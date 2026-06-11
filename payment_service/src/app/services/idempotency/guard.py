@@ -3,8 +3,11 @@ from typing import Callable, Awaitable
 import structlog
 from redis.asyncio import Redis
 
-from app.core.exceptions import RedisUnavailableError, IdempotencyKeyPayloadMismatchError, \
-    IdempotencyKeyAlreadyProcessingError
+from app.core.exceptions import (
+    RedisUnavailableError,
+    IdempotencyKeyPayloadMismatchError,
+    IdempotencyKeyAlreadyProcessingError,
+)
 from app.core.settings import Settings
 from app.services.idempotency.enums import IdempotencyKeyStatus, LockStatus
 from app.services.idempotency.schemas import IdempotencyCachedResult, IdempotencyEntry
@@ -35,6 +38,7 @@ end
 return 0
 """
 
+
 class IdempotencyGuard:
     """
     Контекстный менеджер для идемпотентной обработки запросов
@@ -51,13 +55,16 @@ class IdempotencyGuard:
 
     db_lookup - функция, которая принимает на вход ключ идемпотентности, возвращает dict или None
     """
+
     def __init__(
-            self,
-            settings: Settings,
-            redis: Redis,
-            idempotency_key: str,
-            payload: dict,
-            db_lookup: Callable[[str], Awaitable[IdempotencyCachedResult | None]] | None = None,
+        self,
+        settings: Settings,
+        redis: Redis,
+        idempotency_key: str,
+        payload: dict,
+        db_lookup: (
+            Callable[[str], Awaitable[IdempotencyCachedResult | None]] | None
+        ) = None,
     ) -> None:
         self._payload_hash = compute_payload_hash(payload)
         self._redis = redis
@@ -68,8 +75,7 @@ class IdempotencyGuard:
         self._result_set: bool = False
         self._lock_acquired: bool = False
         self._lock_entry: IdempotencyEntry = IdempotencyEntry(
-            status=IdempotencyKeyStatus.PROCESSING,
-            payload_hash=self._payload_hash
+            status=IdempotencyKeyStatus.PROCESSING, payload_hash=self._payload_hash
         )
         self._lock_value: str = self._lock_entry.model_dump_json()
         self._lock_ttl = settings.IDEMPOTENCY_LOCK_TTL
@@ -79,7 +85,7 @@ class IdempotencyGuard:
 
     @property
     def redis_idempotency_key(self) -> str:
-        return f'idempotency:{self._idempotency_key}'
+        return f"idempotency:{self._idempotency_key}"
 
     @property
     def has_cached_result(self) -> bool:
@@ -102,7 +108,6 @@ class IdempotencyGuard:
         self._cached_status_code = status_code
         self._cached_response = response
 
-
     async def _acquire_lock(self) -> str:
         result = await self._redis.eval(
             _ACQUIRE_LOCK_SCRIPT,
@@ -122,7 +127,7 @@ class IdempotencyGuard:
         )
         return result
 
-    async def __aenter__(self) -> 'IdempotencyGuard':
+    async def __aenter__(self) -> "IdempotencyGuard":
         try:
             lock_acquire_result = await self._acquire_lock()
         except Exception as e:
@@ -147,7 +152,7 @@ class IdempotencyGuard:
                         self._cached_status_code = existing.status_code
                         logger.info(
                             "idempotency_cache_miss_found_in_db",
-                            idempotency_key=self._idempotency_key
+                            idempotency_key=self._idempotency_key,
                         )
                     else:
                         logger.info(
@@ -172,7 +177,7 @@ class IdempotencyGuard:
                         self._cached_status_code = entry.status_code
                         logger.info(
                             "idempotency_cache_hit",
-                            idempotency_key=self._idempotency_key
+                            idempotency_key=self._idempotency_key,
                         )
                     else:
                         raise IdempotencyKeyPayloadMismatchError
@@ -208,9 +213,7 @@ class IdempotencyGuard:
 
             try:
                 await self._redis.set(
-                    self.redis_idempotency_key,
-                    result_value,
-                    ex=self._result_ttl
+                    self.redis_idempotency_key, result_value, ex=self._result_ttl
                 )
                 logger.info(
                     "idempotency_result_cached",
