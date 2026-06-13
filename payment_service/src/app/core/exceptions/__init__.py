@@ -6,6 +6,7 @@ from .idempotency import (
     IdempotencyKeyPayloadMismatchError,
     IdempotencyKeyAlreadyProcessingError,
 )
+from .payment_provider import ProviderIntegrationError, ProviderUnavailableError
 
 __all__ = (
     "AppError",
@@ -16,4 +17,6 @@ __all__ = (
     "IdempotencyKeyPayloadMismatchError",
     "IdempotencyKeyAlreadyProcessingError",
     "IdempotencyError",
+    "ProviderIntegrationError",
+    "ProviderUnavailableError",
 )
