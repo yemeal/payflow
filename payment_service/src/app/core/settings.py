@@ -73,6 +73,14 @@ class Settings(BaseSettings):
         48 * 60 * 60
     )  # какое количество времени результат хранится в кеше
 
+    # --- payment provider ---
+    CIRCUIT_BREAKER_MAX_ATTEMPTS: int
+    CIRCUIT_BREAKER_RECOVERY_TIMEOUT: float
+    PAYMENT_PROVIDER_URL: str
+
+    # --- kafka ---
+    KAFKA_BOOTSTRAP_SERVERS: str
+
 
 @cache
 def get_settings() -> Settings:

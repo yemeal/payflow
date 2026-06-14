@@ -8,6 +8,8 @@ from app.core.exceptions import (
     IdempotencyKeyAlreadyProcessingError,
     IdempotencyKeyPayloadMismatchError,
     RedisUnavailableError,
+    ProviderUnavailableError,
+    ProviderIntegrationError,
 )
 from app.core.settings import get_settings
 
@@ -74,4 +76,34 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"error": "Service temporarily unavailable"},
+        )
+
+    @app.exception_handler(ProviderUnavailableError)
+    async def _(
+        request: Request,
+        exc: ProviderUnavailableError,
+    ) -> JSONResponse:
+        logger.error(
+            "provider_unavailable",
+            error=exc.message,
+            details=exc.details,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "Payment provider is temporarily unavailable. Please try again later."},
+        )
+
+    @app.exception_handler(ProviderIntegrationError)
+    async def _(
+        request: Request,
+        exc: ProviderIntegrationError,
+    ) -> JSONResponse:
+        logger.error(
+            "provider_integration_error",
+            error=exc.message,
+            details=exc.details,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"error": "Payment provider integration error. We are working on it."},
         )
