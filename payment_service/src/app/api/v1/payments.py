@@ -28,12 +28,14 @@ async def create_payment(
     db_lookup = payment_service.build_idempotency_db_lookup()
 
     async with idempotency_service(idempotency_key, payload_dict, db_lookup) as guard:
-        if guard.has_cached_result:
+        # TODO Надо ли выносить в __call__ сервиса? Мы же здесь возвращаем JSONResponse
+        if guard.has_cached_result and guard.cached_status_code is not None:
             return JSONResponse(
                 status_code=guard.cached_status_code,
                 content=guard.cached_response,
             )
 
+        # TODO Вынести в сервис отсюда?
         new_payment = Payment(
             idempotency_key=idempotency_key,
             **payload.model_dump(),
