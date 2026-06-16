@@ -11,10 +11,13 @@ from app.core.di.provider import (
     DatabaseProvider,
     RedisProvider,
     ServiceProvider,
+    IntegrationsProvider,
+    KafkaProvider,
 )
 from app.core.logging import setup_logging
 from app.core.middleware.request_id import RequestIdMiddleware
 from app.api import api_router
+from app.api.health import router as health_router
 from app.api.exception_handlers import register_exception_handlers
 
 setup_logging()
@@ -26,6 +29,7 @@ def make_lifespan() -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("Application started", version=app.version)
         _container = app.state.dishka_container
+        
         try:
             yield
         finally:
@@ -42,6 +46,7 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestIdMiddleware)
+app.include_router(health_router)
 app.include_router(api_router)
 register_exception_handlers(app)
 
@@ -50,10 +55,8 @@ container = make_async_container(
     DatabaseProvider(),
     RedisProvider(),
     ServiceProvider(),
+    IntegrationsProvider(),
+    KafkaProvider(),
 )
 setup_dishka(container, app)
 
-
-@app.get("/ping")
-def ping() -> dict[str, str]:
-    return {"status": "ok"}
