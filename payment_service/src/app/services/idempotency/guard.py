@@ -150,6 +150,7 @@ class IdempotencyGuard:
                     if existing is not None:
                         self._cached_response = existing.response
                         self._cached_status_code = existing.status_code
+                        self._result_set = True
                         logger.info(
                             "idempotency_cache_miss_found_in_db",
                             idempotency_key=self._idempotency_key,

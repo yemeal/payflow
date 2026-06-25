@@ -101,8 +101,8 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
       interval: 10s
       timeout: 5s
-      start_period: 10s
-      retries: 3
+      start_period: 30s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy

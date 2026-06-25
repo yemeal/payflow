@@ -25,8 +25,8 @@ class OutboxRelayService:
             try:
                 await self._process_batch(batch_size)
             except Exception as e:
-                logger.error("outbox_relay_error", error=str(e))
-                
+                logger.exception("outbox_relay_error")
+
             if self._is_running:
                 await asyncio.sleep(poll_interval)
 
@@ -38,7 +38,7 @@ class OutboxRelayService:
 
             async with uow:
                 events = await outbox_repo.get_unpublished_events(limit=batch_size)
-                
+
                 if not events:
                     return
 
@@ -49,10 +49,10 @@ class OutboxRelayService:
                         key=str(event.payload.get("payment_id")).encode("utf-8"),
                         value=json.dumps(event.payload).encode("utf-8"),
                     )
-                    
+
                     # Помечаем как отправленное
                     event.published = True
-                
+
                 # UOW коммитит изменения (published=True) при успешном выходе из блока
                 logger.info("outbox_relay_batch_processed", count=len(events))
 

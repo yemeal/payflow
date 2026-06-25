@@ -44,6 +44,16 @@ def setup_logging() -> None:
         cache_logger_on_first_use=True,
     )
 
+    mute_level = logging.WARNING if logging.WARNING > _get_log_level() else _get_log_level()
+    loggers_config = {}
+    if hasattr(settings, "MUTE_LOGGERS"):
+        for muted in settings.MUTE_LOGGERS:
+            loggers_config[muted] = {
+                "level": mute_level,
+                "handlers": [],
+                "propagate": True
+            }
+
     # перехватывает стандартный logging для единого формата
     logging.config.dictConfig(
         {
@@ -67,6 +77,7 @@ def setup_logging() -> None:
                     "formatter": "structlog",
                 },
             },
+            "loggers": loggers_config,
             "root": {
                 "handlers": ["default"],
                 "level": _get_log_level(),

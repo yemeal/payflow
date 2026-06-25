@@ -29,7 +29,7 @@ def make_lifespan() -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("Application started", version=app.version)
         _container = app.state.dishka_container
-        
+
         try:
             yield
         finally:
@@ -46,7 +46,6 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestIdMiddleware)
-app.include_router(health_router)
 app.include_router(api_router)
 register_exception_handlers(app)
 
@@ -59,4 +58,3 @@ container = make_async_container(
     KafkaProvider(),
 )
 setup_dishka(container, app)
-

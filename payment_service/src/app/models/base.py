@@ -18,6 +18,8 @@ class Base(DeclarativeBase):
     def __tablename__(cls) -> str:
         return f"{re.sub(r'([a-z])([A-Z])', r'\1_\2', cls.__name__).lower()}s"
 
+    __mapper_args__ = {"eager_defaults": True}
+
 
 class UuidMixin:
     __abstract__ = True
