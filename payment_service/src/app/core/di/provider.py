@@ -3,7 +3,7 @@ from typing import AsyncGenerator
 import structlog
 from redis.asyncio import Redis
 from dishka import Provider, Scope, provide, AsyncContainer
-from aiokafka import AIOKafkaProducer
+from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     async_sessionmaker,
@@ -146,7 +146,9 @@ class KafkaProvider(Provider):
     ) -> AsyncGenerator[AIOKafkaProducer, None]:
         producer = AIOKafkaProducer(bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS)
         await producer.start()
-        logger.info("kafka_producer_started", bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS)
+        logger.info(
+            "kafka_producer_started", bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS
+        )
         try:
             yield producer
         finally:

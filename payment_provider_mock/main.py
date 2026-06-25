@@ -29,8 +29,8 @@ async def process_payment(request: PaymentRequest):
         await asyncio.sleep(6.0)
         return {"status": "success", "transaction_id": str(uuid.uuid4()), "note": "delayed"}
         
-    # Case 2: Internal Server Error (15% chance)
-    elif roll <= 30:
+    # Case 2: Internal Server Error (55% chance, total 70% failure rate)
+    elif roll <= 70:
         logger.error("Simulating 500 Internal Server Error...")
         return Response(
             content="Internal Server Error (Simulated)",
@@ -38,7 +38,7 @@ async def process_payment(request: PaymentRequest):
             media_type="text/plain"
         )
         
-    # Case 3: Success (70% chance)
+    # Case 3: Success (30% chance)
     else:
 
         tx_id = f"mock_tx_{uuid.uuid4().hex[:12]}"

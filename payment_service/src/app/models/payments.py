@@ -55,6 +55,4 @@ class Payment(Base, UuidMixin, TimestampMixin):
         String(1000),
         default=None,
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        default=None,
-    )
+

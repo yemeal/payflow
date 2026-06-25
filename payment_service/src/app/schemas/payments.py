@@ -37,7 +37,6 @@ class PaymentResponse(CamelCaseOrmBase):
 
     created_at: datetime
     updated_at: datetime | None
-    completed_at: datetime | None
 
     # external_id и idempotency_key клиенту API знать обычно не обязательно,
     # поэтому их в Response не отдаем из соображений безопасности.

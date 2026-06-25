@@ -1,9 +1,9 @@
 import asyncio
-from typing import Dict
 
 from dishka import FromDishka
 from dishka.integrations.fastapi import inject
 from fastapi import APIRouter, Response
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -37,8 +37,15 @@ async def check_postgres(engine: AsyncEngine) -> bool:
         return False
 
 
+async def check_redis(redis: Redis) -> bool:
+    try:
+        return await redis.ping()
+    except Exception:
+        return False
+
+
 @router.get("/live")
-async def live() -> Dict[str, str]:
+async def live() -> dict[str, str]:
     return {"status": "ok"}
 
 
@@ -47,17 +54,25 @@ async def live() -> Dict[str, str]:
 async def ready(
     response: Response,
     engine: FromDishka[AsyncEngine],
+    redis: FromDishka[Redis],
     settings: FromDishka[Settings],
-) -> Dict[str, str]:
-    postgres_ok = await check_postgres(engine)
-    kafka_ok = await check_kafka(settings.KAFKA_BOOTSTRAP_SERVERS)
+) -> dict[str, str]:
+
+    # запускаем проверки конкурентно
+    postgres_ok, kafka_ok, redis_ok = await asyncio.gather(
+        check_postgres(engine),
+        check_kafka(settings.KAFKA_BOOTSTRAP_SERVERS),
+        check_redis(redis),
+    )
 
     status = {
         "postgres": "ok" if postgres_ok else "unavailable",
         "kafka": "ok" if kafka_ok else "unavailable",
+        "redis": "ok" if redis_ok else "unavailable",
     }
 
-    if not postgres_ok or not kafka_ok:
+    # если хотя бы один из критичных компонентов недоступен - возвращаем 503
+    if not all((postgres_ok, kafka_ok, redis_ok)):
         response.status_code = 503
 
     return status

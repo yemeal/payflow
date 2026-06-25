@@ -5,6 +5,7 @@ import structlog
 from aiokafka import AIOKafkaProducer
 from dishka import AsyncContainer
 
+from app.models.outbox_events import OutboxStatus
 from app.repositories.outbox_repository import OutboxRepositoryProtocol
 from app.utils.unit_of_work import AsyncUOWProtocol
 
@@ -43,17 +44,24 @@ class OutboxRelayService:
                     return
 
                 for event in events:
-                    # Отправляем в Kafka
+                    # Отправляем в Kafka в формате Event Envelope
+                    payload_to_send = {
+                        "id": str(event.id),
+                        "eventType": event.event_type,
+                        "status": event.status.value,
+                        "payload": event.payload,
+                    }
+
                     await self._producer.send_and_wait(
                         topic="payments",
-                        key=str(event.payload.get("payment_id")).encode("utf-8"),
-                        value=json.dumps(event.payload).encode("utf-8"),
+                        key=str(event.payload.get("id")).encode("utf-8"),
+                        value=json.dumps(payload_to_send).encode("utf-8"),
                     )
 
                     # Помечаем как отправленное
-                    event.published = True
+                    event.status = OutboxStatus.SUCCESS
 
-                # UOW коммитит изменения (published=True) при успешном выходе из блока
+                # UOW коммитит изменения при успешном выходе из блока
                 logger.info("outbox_relay_batch_processed", count=len(events))
 
     def stop(self) -> None:

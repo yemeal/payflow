@@ -97,13 +97,7 @@ class PaymentService:
 
             outbox_event = OutboxEvent(
                 event_type=f"payment.{created_payment.status.value.lower()}",
-                payload={
-                    "payment_id": str(created_payment.id),
-                    "amount": str(created_payment.amount),
-                    "currency": created_payment.currency,
-                    "status": created_payment.status.value,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
+                payload=PaymentResponse.model_validate(created_payment).model_dump(mode="json")
             )
             await self._outbox_repository.create(outbox_event)
 
