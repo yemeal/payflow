@@ -1,20 +1,40 @@
 services:
 
-  # --- PostgreSQL ---
-  postgres:
+  # --- PostgreSQL for Payment Service---
+  payment-service-db:
     image: postgres:17-bookworm
-    container_name: payflow-postgres
+    container_name: payment-service-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DATABASE_USER:-db_user}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-db_password}
-      POSTGRES_DB: ${DATABASE_NAME:-db_name}
+      POSTGRES_USER: ${PAYMENT_DB_USER}
+      POSTGRES_PASSWORD: ${PAYMENT_DB_PASSWORD}
+      POSTGRES_DB: ${PAYMENT_DB_NAME}
     ports:
-      - "${DATABASE_PORT:-5432}:5432"
+      - "${PAYMENT_DB_PORT}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - payment_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-db_user} -d ${DATABASE_NAME:-db_name}"]
+      test: ["CMD-SHELL", "pg_isready -U ${PAYMENT_DB_USER} -d ${PAYMENT_DB_NAME}"]
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 5
+
+  # --- PostgreSQL for Analytics Service---
+  analytics-service-db:
+    image: postgres:17-bookworm
+    container_name: analytics-service-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${ANALYTICS_DB_USER}
+      POSTGRES_PASSWORD: ${ANALYTICS_DB_PASSWORD}
+      POSTGRES_DB: ${ANALYTICS_DB_NAME}
+    ports:
+      - "${ANALYTICS_DB_PORT}:5432"
+    volumes:
+      - analytics_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ANALYTICS_DB_USER} -d ${ANALYTICS_DB_NAME}"]
       interval: 5s
       timeout: 3s
       start_period: 10s
@@ -89,7 +109,7 @@ services:
       - ./payment_service/.env
     environment:
       # переопределяем хосты - внутри docker network используем имена сервисов
-      DATABASE_HOST: postgres
+      DATABASE_HOST: payment-service-db
       DATABASE_PORT: 5432
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -98,13 +118,13 @@ services:
     ports:
       - "8000:8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/ready')"]
       interval: 10s
       timeout: 5s
       start_period: 30s
       retries: 5
     depends_on:
-      postgres:
+      payment-service-db:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -141,7 +161,7 @@ services:
     env_file:
       - ./payment_service/.env
     environment:
-      DATABASE_HOST: postgres
+      DATABASE_HOST: payment-service-db
       DATABASE_PORT: 5432
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -149,7 +169,41 @@ services:
       PAYMENT_PROVIDER_URL: http://payment-provider-mock:8010
     command: ["python", "-m", "app.worker"]
     depends_on:
-      postgres:
+      payment-service-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  # --- Analytics Service ---
+  analytics-service:
+    build:
+      context: ./analytics_service
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-develop}
+    container_name: payflow-analytics-service
+    restart: unless-stopped
+    env_file:
+      - ./analytics_service/.env
+    environment:
+      # переопределяем хосты - внутри docker network используем имена сервисов
+      DATABASE_HOST: analytics-service-db
+      DATABASE_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/api/health/ready')"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    depends_on:
+      analytics-service-db:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -157,7 +211,7 @@ services:
         condition: service_healthy
 
 volumes:
-  postgres_data:
+  payment_db_data:
+  analytics_db_data:
   redis_data:
   kafka_data:
-
