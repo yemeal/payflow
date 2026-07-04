@@ -76,9 +76,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
 # документируем порт (но не открываем)
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ping')"]
-
 # LABEL ...
 
 # обязательно переключаемся на ранее созданного non-root юзера

@@ -47,9 +47,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 EXPOSE 8001
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/live')"]
-
 USER appuser
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

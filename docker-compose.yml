@@ -96,6 +96,20 @@ services:
       start_period: 30s
       retries: 5
 
+  # --- Kafka UI ---
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: payflow-kafka-ui
+    restart: unless-stopped
+    ports:
+      - "9099:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "PayFlowLocal"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka:29092"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
   # --- Payment Service ---
   payment-service:
     build:
@@ -119,7 +133,7 @@ services:
       - "8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/ready')"]
-      interval: 10s
+      interval: 120s
       timeout: 5s
       start_period: 30s
       retries: 5
@@ -174,6 +188,56 @@ services:
       redis:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+
+  # --- Payment TaskIQ Worker ---
+  payment-taskiq-worker:
+    build:
+      context: ./payment_service
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-develop}
+    container_name: payflow-payment-taskiq-worker
+    restart: unless-stopped
+    env_file:
+      - ./payment_service/.env
+    environment:
+      DATABASE_HOST: payment-service-db
+      DATABASE_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      PAYMENT_PROVIDER_URL: http://payment-provider-mock:8010
+    command: ["taskiq", "worker", "app.taskiq:broker"]
+    depends_on:
+      payment-service-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      payment-provider-mock:
+        condition: service_healthy
+
+  # --- Payment TaskIQ Scheduler ---
+  payment-taskiq-scheduler:
+    build:
+      context: ./payment_service
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-develop}
+    container_name: payflow-payment-taskiq-scheduler
+    restart: unless-stopped
+    env_file:
+      - ./payment_service/.env
+    environment:
+      DATABASE_HOST: payment-service-db
+      DATABASE_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      PAYMENT_PROVIDER_URL: http://payment-provider-mock:8010
+    command: ["taskiq", "scheduler", "app.taskiq:scheduler"]
+    depends_on:
+      redis:
         condition: service_healthy
 
   # --- Analytics Service ---
