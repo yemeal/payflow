@@ -36,27 +36,27 @@ class PaymentEventHandler:
     async def handle(self, event: PaymentEvent) -> bool:
         logger.info(
             "processing_payment_event_started",
-            event_id=str(event.id),
+            event_id=str(event.metadata.event_id),
         )
 
         async with self._uow:
             # 1. проверяем на дубликаты (идемпотентность)
             # Благодаря on_conflict_do_nothing под капотом, транзакция БД остается живой
-            if not await self._deduplication_service.register_event(str(event.id)):
+            if not await self._deduplication_service.register_event(str(event.metadata.event_id)):
                 logger.info(
                     "processing_payment_event_skipped",
                     reason="duplicate",
-                    event_id=str(event.id),
+                    event_id=str(event.metadata.event_id),
                 )
                 return False
 
             # 2. применяем проекцию к Read-модели
-            await self._projection_service.project_payment(event.payload)
+            await self._projection_service.project_payment(event.data)
 
         # 3. UoW автоматически коммитит изменения при успешном выходе из блока.
         logger.info(
             "processing_payment_event_success",
-            event_id=str(event.id),
+            event_id=str(event.metadata.event_id),
         )
 
         # 4. Сбрасываем кэш аналитики, так как данные обновились

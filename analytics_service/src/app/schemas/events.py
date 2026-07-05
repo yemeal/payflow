@@ -1,11 +1,18 @@
 import uuid
 
+from pydantic import BaseModel
 from app.schemas.base import CamelCaseOrmBase
 from app.schemas.payments import PaymentPayload
 
 
-class PaymentEvent(CamelCaseOrmBase):
-    id: uuid.UUID
+class EventMetadata(CamelCaseOrmBase):
+    event_id: uuid.UUID
     event_type: str
-    payload: PaymentPayload
-    status: str
+    version: str
+    timestamp: str
+    source: str
+
+
+class PaymentEvent(BaseModel):
+    metadata: EventMetadata
+    data: PaymentPayload

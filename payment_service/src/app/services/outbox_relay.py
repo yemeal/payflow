@@ -46,10 +46,14 @@ class OutboxRelayService:
                 for event in events:
                     # Отправляем в Kafka в формате Event Envelope
                     payload_to_send = {
-                        "id": str(event.id),
-                        "eventType": event.event_type,
-                        "status": event.status.value,
-                        "payload": event.payload,
+                        "metadata": {
+                            "eventId": str(event.id),
+                            "eventType": event.event_type,
+                            "version": "1.0",
+                            "timestamp": event.created_at.isoformat(),
+                            "source": "payment-service",
+                        },
+                        "data": event.payload,
                     }
 
                     await self._producer.send_and_wait(
