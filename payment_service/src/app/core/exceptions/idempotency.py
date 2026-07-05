@@ -21,3 +21,10 @@ class IdempotencyKeyPayloadMismatchError(IdempotencyError):
         self, message: str = "Ключ идемпотентности использован с другим payload"
     ):
         super().__init__(message)
+
+
+class IdempotencyStateInconsistencyError(IdempotencyError):
+    """Внутренняя ошибка сервиса идемпотентности: несогласованность данных/состояний"""
+
+    def __init__(self, message: str = "Нарушена консистентность состояния идемпотентности"):
+        super().__init__(message)

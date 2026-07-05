@@ -1,23 +1,24 @@
 from typing import Awaitable, Callable
 
-from redis.asyncio import Redis
-
 from app.core.settings import Settings
-from app.services.idempotency import IdempotencyCachedResult, IdempotencyGuard
+from app.services.idempotency.domain import IdempotencyCachedResult
+from app.services.idempotency.guard import IdempotencyGuard
+from app.services.idempotency.protocols import IdempotencyStorageProtocol
 
 
 class IdempotencyService:
     """
     Фабрика IdempotencyGuard объектов, инжектится через DI.
-    Не знает про конкретные сузности
+    Не знает про конкретные сущности.
+    Зависит от IdempotencyStorageProtocol
     """
 
     def __init__(
         self,
-        redis: Redis,
+        storage: IdempotencyStorageProtocol,
         settings: Settings,
     ) -> None:
-        self._redis: Redis = redis
+        self._storage: IdempotencyStorageProtocol = storage
         self._settings: Settings = settings
 
     def __call__(
@@ -29,7 +30,7 @@ class IdempotencyService:
         ) = None,
     ) -> IdempotencyGuard:
         return IdempotencyGuard(
-            redis=self._redis,
+            storage=self._storage,
             settings=self._settings,
             idempotency_key=idempotency_key,
             payload=payload,

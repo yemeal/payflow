@@ -1,47 +1,34 @@
+from __future__ import annotations
 from typing import Callable, Awaitable
 
 import structlog
-from redis.asyncio import Redis
 
 from app.core.exceptions import (
-    RedisUnavailableError,
     IdempotencyKeyPayloadMismatchError,
     IdempotencyKeyAlreadyProcessingError,
+    IdempotencyStateInconsistencyError,
 )
 from app.core.settings import Settings
-from app.services.idempotency.enums import IdempotencyKeyStatus, LockStatus
-from app.services.idempotency.schemas import IdempotencyCachedResult, IdempotencyEntry
+from app.services.idempotency.domain import IdempotencyCachedResult, IdempotencyEntry
+from app.services.idempotency.enums import (
+    IdempotencyKeyStatus,
+    GuardState,
+    LockAcquireStatus,
+)
+from app.services.idempotency.protocols import IdempotencyStorageProtocol
 from app.utils.compute_payload_hash import compute_payload_hash
 
 logger = structlog.get_logger()
 
-_ACQUIRE_LOCK_SCRIPT = """
-local current = redis.call('GET', KEYS[1])
-if current then
-    return {'EXISTS', current}
-end
-redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
-return {'LOCKED'}
-"""
-
-# Удаляет ключ ТОЛЬКО если текущее значение содержит status="processing"
-# Это защита: не удалить чужой result, если lock уже истёк и другой запрос записал результат
-_RELEASE_LOCK_SCRIPT = """
-local current = redis.call('GET', KEYS[1])
-if not current then
-    return 0
-end
--- проверяем что текущий payload_hash совпадает с нашим (мы удаляем именно свой lock)
-if current == ARGV[1] then
-    return redis.call('DEL', KEYS[1])
-end
-return 0
-"""
-
 
 class IdempotencyGuard:
     """
-    Контекстный менеджер для идемпотентной обработки запросов
+    Контекстный менеджер для идемпотентной обработки запросов, использующий FSM.
+    Не завсисит от конкретных хранилищ, хранилища инжектятся через DI
+    с помощью адаптеров, реализующих интерфейс `IdempotencyStorageProtocol`
+
+    db_lookup -> функция похода в БД для обеспечения Two-Level проверки.
+    Она принимает на вход ключ идемпотентности и возвращает `IdempotencyCachedResult | None`
 
     Пример применения:
     ```python
@@ -52,14 +39,12 @@ class IdempotencyGuard:
             service.set_result(status_code=201, response=result)
             return result
     ```
-
-    db_lookup - функция, которая принимает на вход ключ идемпотентности, возвращает dict или None
     """
 
     def __init__(
         self,
         settings: Settings,
-        redis: Redis,
+        storage: IdempotencyStorageProtocol,
         idempotency_key: str,
         payload: dict,
         db_lookup: (
@@ -67,13 +52,14 @@ class IdempotencyGuard:
         ) = None,
     ) -> None:
         self._payload_hash = compute_payload_hash(payload)
-        self._redis = redis
+        self._storage = storage
         self._idempotency_key = idempotency_key
+
+        self._state = GuardState.NEW  # при создании - состояние new
 
         self._cached_response: dict | None = None
         self._cached_status_code: int | None = None
-        self._result_set: bool = False
-        self._lock_acquired: bool = False
+
         self._lock_entry: IdempotencyEntry = IdempotencyEntry(
             status=IdempotencyKeyStatus.PROCESSING, payload_hash=self._payload_hash
         )
@@ -104,70 +90,62 @@ class IdempotencyGuard:
 
     def set_result(self, status_code: int, response: dict) -> None:
         """Вызывается после успешной бизнес-логики"""
-        self._result_set = True
+        if self._state != GuardState.PROCESSING:
+            return  # изменить результат можно только если мы реально его процессили
+
         self._cached_status_code = status_code
         self._cached_response = response
+        self._state = GuardState.COMPLETED
 
-    async def _acquire_lock(self) -> str:
-        result = await self._redis.eval(
-            _ACQUIRE_LOCK_SCRIPT,
-            1,
-            self.redis_idempotency_key,  # KEYS[1]
-            self._lock_value,  # ARGV[1]
-            str(self._lock_ttl),  # ARGV[2]
+    async def __aenter__(self) -> IdempotencyGuard:
+        # захватываем лок сразу при входе
+        result = await self._storage.acquire_lock(
+            key=self.redis_idempotency_key,
+            lock_value=self._lock_value,
+            ttl=self._lock_ttl,
         )
-        return result
 
-    async def _release_lock(self) -> str:
-        result = await self._redis.eval(
-            _RELEASE_LOCK_SCRIPT,
-            1,
-            self.redis_idempotency_key,
-            self._lock_value,
-        )
-        return result
+        match result.status:
+            case LockAcquireStatus.LOCK_ACQUIRED:
+                self._state = GuardState.LOCK_ACQUIRED
+                logger.info(
+                    "idempotency_lock_acquired",
+                    idempotency_key=self._idempotency_key,
+                )
 
-    async def __aenter__(self) -> "IdempotencyGuard":
-        try:
-            lock_acquire_result = await self._acquire_lock()
-        except Exception as e:
-            logger.error(
-                "redis_unavailable_when_acquiring_lock",
-                idempotency_key=self._idempotency_key,
-                error=str(e),
-            )
-            raise RedisUnavailableError() from e
-
-        # разве вот так хардкодить нормально, можно ли это сделать как-то элегантнее?
-        match lock_acquire_result[0]:
-            case LockStatus.LOCKED.value:
-                self._lock_acquired = True
-
-                # Идем в БД проверять наличие готового рез-та с таким же ключом идемпотентности
-                # в случае, если нам была передана подходящая функция
+                # Сделали лок - идем в БД проверять наличие готового рез-та с таким же ключом идемпотентности.
+                # Таким образом в БД не летят 100 запросов, проскакивает лишь один
+                # (в случае, если нам была передана подходящая функция для похода в БД)
                 if self._db_lookup is not None:
                     existing = await self._db_lookup(self._idempotency_key)
                     if existing is not None:
+                        # если в БД существует сущность с таким ключом идемпотентности
                         self._cached_response = existing.response
                         self._cached_status_code = existing.status_code
-                        self._result_set = True
+                        self._state = GuardState.DB_HIT
                         logger.info(
                             "idempotency_cache_miss_found_in_db",
                             idempotency_key=self._idempotency_key,
                         )
                     else:
+                        self._state = GuardState.PROCESSING
                         logger.info(
-                            "idempotency_lock_acquired_not_found_in_db",
+                            "idempotency_not_found_in_db, processing",
                             idempotency_key=self._idempotency_key,
                         )
                 else:
-                    logger.info(
-                        "idempotency_lock_acquired_without_db_lookup",
+                    self._state = GuardState.PROCESSING
+                    logger.debug(
+                        "idempotency_processing",
                         idempotency_key=self._idempotency_key,
                     )
-            case LockStatus.EXISTS.value:
-                # lock_acquire_result[1] - JSON-строка из Редиса
-                entry = IdempotencyEntry.model_validate_json(lock_acquire_result[1])
+
+            case LockAcquireStatus.ENTRY_EXISTS:
+                entry = result.existing_entry
+                if entry is None:
+                    raise IdempotencyStateInconsistencyError(
+                        "ENTRY_EXISTS status must provide existing_entry"
+                    )
 
                 if entry.status == IdempotencyKeyStatus.PROCESSING:
                     raise IdempotencyKeyAlreadyProcessingError
@@ -176,58 +154,48 @@ class IdempotencyGuard:
                     if entry.payload_hash == self._payload_hash:
                         self._cached_response = entry.response
                         self._cached_status_code = entry.status_code
+                        self._state = GuardState.CACHE_HIT
                         logger.info(
                             "idempotency_cache_hit",
                             idempotency_key=self._idempotency_key,
                         )
                     else:
                         raise IdempotencyKeyPayloadMismatchError
+
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        # в случае ошибки освобождаем блокировку
-        if exc_type is not None and self._lock_acquired:
-            try:
-                await self._release_lock()
+        if exc_type is not None and self._state == GuardState.PROCESSING:
+            self._state = GuardState.FAILED
+
+        match self._state:
+            case GuardState.FAILED:
+                # в случае фейла освобождаем блокировку
+                await self._storage.release_lock(
+                    key=self.redis_idempotency_key, expected_value=self._lock_value
+                )
                 logger.warning(
                     "idempotency_lock_released_due_to_error",
                     idempotency_key=self._idempotency_key,
                     error_type=exc_type.__name__ if exc_type else None,
                     error=str(exc_val),
                 )
-                return
-            except Exception as e:
-                logger.warning(
-                    "redis_unavailable_when_releasing_lock",
-                    idempotency_key=self._idempotency_key,
-                    error=str(e),
-                )
 
-        # при успехе и полученном результате - кешируем его
-        if self._result_set and self._lock_acquired:
-            result_value: str = IdempotencyEntry(
-                status=IdempotencyKeyStatus.DONE,
-                payload_hash=self._payload_hash,
-                status_code=self._cached_status_code,
-                response=self._cached_response,
-            ).model_dump_json()
-
-            try:
-                await self._redis.set(
-                    self.redis_idempotency_key, result_value, ex=self._result_ttl
+            case GuardState.COMPLETED | GuardState.DB_HIT:
+                # в случае успеха (COMPLETED) или поднятия из БД (DB_HIT),
+                # кешируем результат в Redis
+                result_entry = IdempotencyEntry(
+                    status=IdempotencyKeyStatus.DONE,
+                    payload_hash=self._payload_hash,
+                    status_code=self._cached_status_code,
+                    response=self._cached_response,
                 )
-                logger.info(
-                    "idempotency_result_cached",
-                    idempotency_key=self._idempotency_key,
+                await self._storage.save_result(
+                    key=self.redis_idempotency_key,
+                    entry=result_entry,
                     ttl=self._result_ttl,
                 )
-            except Exception as e:
-                # Redis упал при попытке записать в кэш, но результат уже создан в БД
-                # и при повторном обращении возьмет уже готовый и снова попробует его закешировать.
-                # Поэтому идемпотентность будет соблюдена, даже без записи кэша
-                logger.warning(
-                    "unsuccessful_idempotency_result_cache_write",
-                    error=str(e),
-                    idempotency_key=self._idempotency_key,
-                    status_code=self._cached_status_code,
-                )
+
+            case _:
+                # CACHE_HIT или другие промежуточные состояния ничего не делают при выходе
+                pass
