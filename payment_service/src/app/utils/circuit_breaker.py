@@ -27,10 +27,12 @@ class CircuitBreaker:
         fail_max: int,
         recovery_timeout: float,
         name: str,
+        is_failure: Callable[[Exception], bool] | None = None,
     ) -> None:
         self._fail_max = fail_max
         self._recovery_timeout = recovery_timeout
         self.name = name
+        self._is_failure = is_failure or (lambda e: True)
 
         self._state = CircuitState.CLOSED
         self._failure_count = 0
@@ -138,9 +140,10 @@ class CircuitBreaker:
             # выполняем защищаемый асинхронный вызов переданной функции
             result = await func(*args, **kwargs)
         except Exception as e:
-            # в случае ошибки обрабатываем сбой
-            async with self._lock:
-                await self._handle_failure(e)
+            # в случае ошибки обрабатываем сбой, только если это реальный сбой
+            if self._is_failure(e):
+                async with self._lock:
+                    await self._handle_failure(e)
             raise e
 
         # в случае успеха сбрасываем состояние

@@ -2,16 +2,7 @@ import asyncio
 import signal
 import structlog
 
-from dishka import make_async_container
-
-from app.core.di.provider import (
-    SettingsProvider,
-    DatabaseProvider,
-    RedisProvider,
-    ServiceProvider,
-    IntegrationsProvider,
-    KafkaProvider,
-)
+from app.core.di import create_container
 from app.core.logging import setup_logging
 from app.services.outbox_relay import OutboxRelayService
 
@@ -21,14 +12,7 @@ async def main() -> None:
     setup_logging()
     logger.info("worker_starting")
 
-    container = make_async_container(
-        SettingsProvider(),
-        DatabaseProvider(),
-        RedisProvider(),
-        ServiceProvider(),
-        IntegrationsProvider(),
-        KafkaProvider(),
-    )
+    container = create_container()
 
     relay = await container.get(OutboxRelayService)
     

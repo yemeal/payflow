@@ -65,7 +65,7 @@ class Settings(BaseSettings):
 
     @property
     def REDIS_URL(self) -> str:
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}?socket_timeout=30"
 
     # --- idempotency --
     IDEMPOTENCY_LOCK_TTL: int = 60  # время жизни лока в секундах (по дефолту 60)
@@ -73,10 +73,15 @@ class Settings(BaseSettings):
         48 * 60 * 60
     )  # какое количество времени результат хранится в кеше
 
-    # --- payment provider ---
+    # --- circuit breaker ---
     CIRCUIT_BREAKER_MAX_ATTEMPTS: int
     CIRCUIT_BREAKER_RECOVERY_TIMEOUT: float
+
+    # --- payment provider ---
     PAYMENT_PROVIDER_URL: str
+    PAYMENT_PROVIDER_TIMEOUT: float
+    PAYMENT_PROVIDER_MAX_RETRIES: int
+    PAYMENT_PROVIDER_MAX_RPS: int = 50
 
     # --- kafka ---
     KAFKA_BOOTSTRAP_SERVERS: str

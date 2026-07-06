@@ -12,10 +12,8 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.settings import Settings, get_settings
-from app.integrations.payment_provider_client import (
-    PaymentProviderProtocol,
-    PaymentProviderClient,
-)
+from app.integrations.payment_providers.ports import PaymentProviderProtocol
+from app.integrations.payment_providers.adapters import MockPaymentProviderAdapter
 from app.models import Payment, OutboxEvent
 from app.repositories.outbox_repository import (
     OutboxRepository,
@@ -25,7 +23,11 @@ from app.repositories.payment_repository import (
     PaymentRepository,
     PaymentRepositoryProtocol,
 )
-from app.services.idempotency import IdempotencyService
+from app.services.idempotency import (
+    IdempotencyService,
+    IdempotencyStorageProtocol,
+    RedisIdempotencyStorage,
+)
 from app.services.payment_service import PaymentService, PaymentServiceProtocol
 from app.services.outbox_relay import OutboxRelayService
 from app.utils.circuit_breaker import CircuitBreaker
@@ -94,7 +96,8 @@ class ServiceProvider(Provider):
     def provide_payment_repository(
         self, session: AsyncSession
     ) -> PaymentRepositoryProtocol:
-        return PaymentRepository(session, Payment)
+        from app.repositories.postgres.models import PaymentORM
+        return PaymentRepository(session, PaymentORM)
 
     @provide(scope=Scope.REQUEST)
     def provide_outbox_repository(
@@ -112,27 +115,34 @@ class ServiceProvider(Provider):
     ) -> PaymentServiceProtocol:
         return PaymentService(repo, uow, payment_provider, outbox_repo)
 
+    @provide(scope=Scope.APP)
+    def provide_idempotency_storage(self, redis: Redis) -> IdempotencyStorageProtocol:
+        return RedisIdempotencyStorage(redis)
+
     @provide(scope=Scope.REQUEST)
     def provide_idempotency_service(
-        self, redis: Redis, settings: Settings
+        self, storage: IdempotencyStorageProtocol, settings: Settings
     ) -> IdempotencyService:
-        return IdempotencyService(redis, settings)
+        return IdempotencyService(storage, settings)
 
 
 class IntegrationsProvider(Provider):
     @provide(scope=Scope.APP)
     def provide_circuit_breaker(self, settings: Settings) -> CircuitBreaker:
+        from app.integrations.payment_providers.adapters import _is_retriable_error
+        
         return CircuitBreaker(
             fail_max=settings.CIRCUIT_BREAKER_MAX_ATTEMPTS,
             recovery_timeout=settings.CIRCUIT_BREAKER_RECOVERY_TIMEOUT,
             name="payment-provider-mock",
+            is_failure=_is_retriable_error,
         )
 
     @provide(scope=Scope.APP)
     async def provide_payment_provider(
         self, settings: Settings, cb: CircuitBreaker
     ) -> AsyncGenerator[PaymentProviderProtocol, None]:
-        client = PaymentProviderClient(settings, circuit_breaker=cb)
+        client = MockPaymentProviderAdapter(settings, circuit_breaker=cb)
         try:
             yield client
         finally:

@@ -5,6 +5,7 @@ from .idempotency import (
     IdempotencyError,
     IdempotencyKeyPayloadMismatchError,
     IdempotencyKeyAlreadyProcessingError,
+    IdempotencyStateInconsistencyError,
 )
 from .payment_provider import ProviderIntegrationError, ProviderUnavailableError
 
@@ -14,9 +15,10 @@ __all__ = (
     "RedisUnavailableError",
     "PaymentError",
     "PaymentNotFoundError",
+    "IdempotencyError",
     "IdempotencyKeyPayloadMismatchError",
     "IdempotencyKeyAlreadyProcessingError",
-    "IdempotencyError",
+    "IdempotencyStateInconsistencyError",
     "ProviderIntegrationError",
     "ProviderUnavailableError",
 )
