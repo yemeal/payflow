@@ -15,7 +15,7 @@ class PaymentCreate(CamelCaseBase):
 
     # почему в заголовке? потому что идемпотентность - это инфраструктурный механизм HTTP уровня API,
     # а тело запроса (Payload/DTO) относится строго к бизнес-логике приложения
-    amount: Decimal = Field(gt=0, decimal_places=2)
+    amount: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
     currency: str = Field(min_length=3, max_length=3, pattern="^[A-Z]{3}$")
     customer_id: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=1000)

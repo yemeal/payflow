@@ -35,14 +35,10 @@ async def create_payment(
                 content=guard.cached_response,
             )
 
-        # TODO Вынести в сервис отсюда?
-        new_payment = Payment(
-            idempotency_key=idempotency_key,
-            **payload.model_dump(),
-            status=PaymentStatus.PENDING,
+        created_payment = await payment_service.create(payload, idempotency_key)
+        response = PaymentResponse.model_validate(created_payment).model_dump(
+            mode="json"
         )
-        created = await payment_service.create(new_payment)
-        response = PaymentResponse.model_validate(created).model_dump(mode="json")
 
         guard.set_result(status_code=201, response=response)
         return response

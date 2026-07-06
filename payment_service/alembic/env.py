@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from app.core.settings import get_settings
 from app.models import *
+from app.repositories.postgres.models import *
 
 target_metadata = Base.metadata
 

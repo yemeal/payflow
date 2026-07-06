@@ -1,11 +1,10 @@
 from decimal import Decimal
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
+from uuid import UUID
+import uuid
 
-from sqlalchemy import Enum as SAEnum, Numeric, String, CheckConstraint
-from sqlalchemy.orm import Mapped, mapped_column
-
-from app.models.base import Base, UuidMixin, TimestampMixin
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PaymentStatus(Enum):
@@ -17,42 +16,18 @@ class PaymentStatus(Enum):
     CANCELED = "CANCELED"
 
 
-class Payment(Base, UuidMixin, TimestampMixin):
-    idempotency_key: Mapped[str] = mapped_column(
-        unique=True,
-        index= True,
-    )
-    status: Mapped[PaymentStatus] = mapped_column(
-        SAEnum(PaymentStatus),
-    )
-    amount: Mapped[Decimal] = mapped_column(
-        Numeric(10, 2),
-        CheckConstraint(
-            "amount > 0",
-            name="check_amount",
-        ),
-    )
-    currency: Mapped[str] = mapped_column(
-        String(3),
-        CheckConstraint(
-            "currency ~ '^[A-Z]{3}$'",
-            name="check_currency_format",
-        ),
-    )
+class Payment(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-    external_id: Mapped[str | None] = mapped_column(
-        String(255),
-        unique=True,
-        index=True,
-        default=None,
+    id: UUID = Field(default_factory=uuid.uuid7)
+    idempotency_key: str
+    status: PaymentStatus
+    amount: Decimal
+    currency: str
+    external_id: str | None = None
+    customer_id: str | None = None
+    description: str | None = None
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
-    customer_id: Mapped[str | None] = mapped_column(
-        String(255),
-        index=True,
-        default=None,
-    )
-    description: Mapped[str | None] = mapped_column(
-        String(1000),
-        default=None,
-    )
-
+    updated_at: datetime | None = None
