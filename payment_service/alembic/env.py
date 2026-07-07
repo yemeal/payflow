@@ -13,8 +13,7 @@ from alembic import context
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
 from app.core.settings import get_settings
-from app.models import *
-from app.repositories.postgres.models import *
+from app.infrastructure.database.models import *
 
 target_metadata = Base.metadata
 
