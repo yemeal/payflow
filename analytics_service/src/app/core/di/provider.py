@@ -9,10 +9,10 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,
     create_async_engine,
 )
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+# from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 from app.core.settings import Settings, get_settings
-from app.consumer.kafka_consumer import AnalyticsConsumerRunner
+# from app.consumer.kafka_consumer import AnalyticsConsumerRunner
 
 from app.utils.unit_of_work import AsyncUOWProtocol, SQLAlchemyAsyncUOW
 from app.repositories.payments import PaymentRepositoryProtocol, PaymentRepository
@@ -149,55 +149,57 @@ class ServiceProvider(Provider):
 
 
 class KafkaProvider(Provider):
-    @provide(scope=Scope.APP)
-    async def provide_kafka_consumer(
-        self, settings: Settings
-    ) -> AsyncIterable[AIOKafkaConsumer]:
-        consumer = AIOKafkaConsumer(
-            settings.KAFKA_TOPIC,
-            bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
-            group_id=settings.KAFKA_CONSUMER_GROUP,
-            enable_auto_commit=False,
-            auto_offset_reset="earliest",
-        )
-        await consumer.start()
-        logger.info(
-            "kafka_consumer_started",
-            topic=settings.KAFKA_TOPIC,
-            group=settings.KAFKA_CONSUMER_GROUP,
-        )
-        try:
-            yield consumer
-        finally:
-            await consumer.stop()
-            logger.info("kafka_producer_stopped")
-
-    @provide(scope=Scope.APP)
-    async def provide_kafka_producer(
-        self, settings: Settings
-    ) -> AsyncIterable[AIOKafkaProducer]:
-        producer = AIOKafkaProducer(
-            bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS, acks="all"
-        )
-        await producer.start()
-        logger.info("kafka_producer_started")
-        try:
-            yield producer
-        finally:
-            await producer.stop()
-            logger.info("kafka_producer_stopped")
-
-    @provide(scope=Scope.APP)
-    def provide_consumer_runner(
-        self,
-        container: AsyncContainer,
-        consumer: AIOKafkaConsumer,
-        producer: AIOKafkaProducer,
-        settings: Settings,
-    ) -> AnalyticsConsumerRunner:
-        return AnalyticsConsumerRunner(
-            consumer=consumer,
-            producer=producer,
-            container=container,
-            dlq_topic=f"{settings.KAFKA_TOPIC}.dlq",
-        )
+    # LEGACY IMPLEMENTATION COMMENTED OUT
+    pass
+    # @provide(scope=Scope.APP)
+    # async def provide_kafka_consumer(
+    #     self, settings: Settings
+    # ) -> AsyncIterable[AIOKafkaConsumer]:
+    #     consumer = AIOKafkaConsumer(
+    #         settings.KAFKA_TOPIC,
+    #         bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS,
+    #         group_id=settings.KAFKA_CONSUMER_GROUP,
+    #         enable_auto_commit=False,
+    #         auto_offset_reset="earliest",
+    #     )
+    #     await consumer.start()
+    #     logger.info(
+    #         "kafka_consumer_started",
+    #         topic=settings.KAFKA_TOPIC,
+    #         group=settings.KAFKA_CONSUMER_GROUP,
+    #     )
+    #     try:
+    #         yield consumer
+    #     finally:
+    #         await consumer.stop()
+    #         logger.info("kafka_producer_stopped")
+    # 
+    # @provide(scope=Scope.APP)
+    # async def provide_kafka_producer(
+    #     self, settings: Settings
+    # ) -> AsyncIterable[AIOKafkaProducer]:
+    #     producer = AIOKafkaProducer(
+    #         bootstrap_servers=settings.KAFKA_BOOTSTRAP_SERVERS, acks="all"
+    #     )
+    #     await producer.start()
+    #     logger.info("kafka_producer_started")
+    #     try:
+    #         yield producer
+    #     finally:
+    #         await producer.stop()
+    #         logger.info("kafka_producer_stopped")
+    # 
+    # @provide(scope=Scope.APP)
+    # def provide_consumer_runner(
+    #     self,
+    #     container: AsyncContainer,
+    #     consumer: AIOKafkaConsumer,
+    #     producer: AIOKafkaProducer,
+    #     settings: Settings,
+    # ) -> AnalyticsConsumerRunner:
+    #     return AnalyticsConsumerRunner(
+    #         consumer=consumer,
+    #         producer=producer,
+    #         container=container,
+    #         dlq_topic=f"{settings.KAFKA_TOPIC}.dlq",
+    #     )

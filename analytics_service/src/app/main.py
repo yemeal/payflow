@@ -29,20 +29,17 @@ def make_lifespan() -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
         logger.info("Application started", version=app.version)
         _container = app.state.dishka_container
 
-        # получаем раннер из DI контейнера и запускаем как фоновую задачу
-        from app.consumer.kafka_consumer import AnalyticsConsumerRunner
-        import asyncio
+        from app.faststream_app import broker
 
-        consumer_runner = await _container.get(AnalyticsConsumerRunner)
-        runner_task = asyncio.create_task(consumer_runner.run())
+        await broker.start()
+        logger.info("FastStream broker started")
 
         try:
             yield
         finally:
             logger.info("Application shutting down")
-            # корректно останавливаем консьюмер
-            await consumer_runner.stop()
-            await asyncio.gather(runner_task, return_exceptions=True)
+            await broker.stop()
+            logger.info("FastStream broker stopped")
             await _container.close()
 
     return lifespan
