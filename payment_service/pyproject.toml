@@ -22,7 +22,9 @@ dependencies = [
     "aiokafka (>=0.14.0,<0.15.0)",
     "taskiq (>=0.12.4,<0.13.0)",
     "taskiq-redis (>=1.2.3,<2.0.0)",
-    "aiolimiter (>=1.2.1,<2.0.0)"
+    "aiolimiter (>=1.2.1,<2.0.0)",
+    "faststream[kafka] (>=0.7.1,<0.8.0)",
+    "dishka-faststream (>=0.7.0,<0.8.0)"
 ]
 
 
