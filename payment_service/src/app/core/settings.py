@@ -85,6 +85,14 @@ class Settings(BaseSettings):
 
     # --- kafka ---
     KAFKA_BOOTSTRAP_SERVERS: str
+    KAFKA_EVENTS_TOPIC: str = "payments.events"
+    KAFKA_COMMANDS_TOPIC: str = "payments.commands"
+    KAFKA_CONSUMER_GROUP: str = "payment-service-commands"
+
+    # --- outbox ---
+    # после скольких неудачных попыток публикации событие помечается FAILED
+    # ("ядовитое" событие, разбор вручную); SUCCESS-события хранятся вечно (аудит-лог)
+    OUTBOX_MAX_PUBLISH_ATTEMPTS: int = 5
 
 
 @cache
