@@ -3,10 +3,11 @@ from unittest.mock import AsyncMock, MagicMock
 from decimal import Decimal
 from uuid import uuid4
 
-from app.services.payment_service import PaymentService
-from app.models import Payment, OutboxEvent
-from app.models.payments import PaymentStatus
-from app.core.exceptions.payment_provider import ProviderUnavailableError, ProviderIntegrationError
+from app.application.services.payment_service import PaymentService
+from app.domain.payments import Payment
+from app.domain.outbox import OutboxEvent
+from app.domain.payments import PaymentStatus
+from app.infrastructure.exceptions.payment_providers import ProviderUnavailableError, ProviderIntegrationError
 
 @pytest.fixture
 def mock_payment_repo():
@@ -35,6 +36,81 @@ def service(mock_payment_repo, mock_uow, mock_provider, mock_outbox_repo):
         payment_provider=mock_provider,
         outbox_repository=mock_outbox_repo,
     )
+
+def make_payment_create():
+    """Мок PaymentCreate: create() зовет только payload.model_dump()"""
+    payload = MagicMock()
+    payload.model_dump.return_value = {
+        "amount": Decimal("100.00"),
+        "currency": "RUB",
+        "customer_id": None,
+        "description": None,
+    }
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_create_provider_call_outside_transaction(
+    service, mock_provider, mock_payment_repo, mock_outbox_repo, mock_uow
+):
+    """
+    Регресс-тест к TECH_DEBT п.6: HTTP-вызов провайдера не должен выполняться
+    внутри открытой транзакции БД (иначе пул исчерпывается при деградации провайдера).
+    Проверяем: на момент вызова провайдера первая транзакция уже закрыта.
+    """
+    uow_depth = 0
+    provider_called_at_depth = None
+
+    async def uow_enter(*args):
+        nonlocal uow_depth
+        uow_depth += 1
+
+    async def uow_exit(*args):
+        nonlocal uow_depth
+        uow_depth -= 1
+
+    mock_uow.__aenter__.side_effect = uow_enter
+    mock_uow.__aexit__.side_effect = uow_exit
+
+    async def initiate(*args, **kwargs):
+        nonlocal provider_called_at_depth
+        provider_called_at_depth = uow_depth
+        response = MagicMock()
+        response.transaction_id = "ext-42"
+        return response
+
+    mock_provider.initiate_transaction.side_effect = initiate
+    mock_payment_repo.create.side_effect = lambda p: p
+    mock_payment_repo.update.side_effect = lambda p: p
+
+    payment = await service.create(make_payment_create(), idempotency_key="key-42")
+
+    assert provider_called_at_depth == 0  # провайдер вызван вне транзакции
+    assert payment.status == PaymentStatus.PROCESSING
+    assert payment.external_id == "ext-42"
+    # два outbox-события: payment.pending и payment.processing
+    assert mock_outbox_repo.create.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_create_provider_failure_commits_failed_status_then_raises(
+    service, mock_provider, mock_payment_repo, mock_outbox_repo
+):
+    mock_provider.initiate_transaction.side_effect = ProviderUnavailableError(
+        message="unavailable", details=""
+    )
+    mock_payment_repo.create.side_effect = lambda p: p
+    mock_payment_repo.update.side_effect = lambda p: p
+
+    with pytest.raises(ProviderUnavailableError):
+        await service.create(make_payment_create(), idempotency_key="key-43")
+
+    # FAILED-статус закоммичен до проброса ошибки
+    updated_payment = mock_payment_repo.update.await_args.args[0]
+    assert updated_payment.status == PaymentStatus.FAILED
+    # события: payment.pending + payment.failed
+    assert mock_outbox_repo.create.await_count == 2
+
 
 @pytest.mark.asyncio
 async def test_sync_payment_with_provider_completed(service, mock_provider, mock_payment_repo, mock_outbox_repo):
