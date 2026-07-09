@@ -110,14 +110,14 @@ services:
       kafka:
         condition: service_healthy
 
-  # --- Payment Service ---
-  payment-service:
+  # --- Payment Service API Worker ---
+  payment-service-api-worker:
     build:
       context: ./payment_service
       dockerfile: Dockerfile
       args:
         APP_VERSION: ${APP_VERSION:-develop}
-    container_name: payflow-payment-service
+    container_name: payflow-payment-service-api-worker
     restart: unless-stopped
     env_file:
       - ./payment_service/.env
@@ -163,14 +163,14 @@ services:
       start_period: 5s
       retries: 3
 
-  # --- Payment Outbox Relay Worker ---
-  payment-outbox-relay:
+  # --- Payment Service Events Producer ---
+  payment-service-events-producer:
     build:
       context: ./payment_service
       dockerfile: Dockerfile
       args:
         APP_VERSION: ${APP_VERSION:-develop}
-    container_name: payflow-payment-outbox-relay
+    container_name: payflow-payment-service-events-producer
     restart: unless-stopped
     env_file:
       - ./payment_service/.env
@@ -181,7 +181,34 @@ services:
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       PAYMENT_PROVIDER_URL: http://payment-provider-mock:8010
-    command: ["python", "-m", "app.worker"]
+    command: ["python", "-m", "app.entrypoints.messaging.producer"]
+    depends_on:
+      payment-service-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  # --- Payment Service Events Consumer ---
+  payment-service-events-consumer:
+    build:
+      context: ./payment_service
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-develop}
+    container_name: payflow-payment-service-events-consumer
+    restart: unless-stopped
+    env_file:
+      - ./payment_service/.env
+    environment:
+      DATABASE_HOST: payment-service-db
+      DATABASE_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      PAYMENT_PROVIDER_URL: http://payment-provider-mock:8010
+    command: ["python", "-m", "app.entrypoints.messaging.consumer"]
     depends_on:
       payment-service-db:
         condition: service_healthy
@@ -208,7 +235,7 @@ services:
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       PAYMENT_PROVIDER_URL: http://payment-provider-mock:8010
-    command: ["taskiq", "worker", "app.taskiq:broker"]
+    command: ["taskiq", "worker", "app.entrypoints.workers.taskiq:broker"]
     depends_on:
       payment-service-db:
         condition: service_healthy
@@ -235,7 +262,7 @@ services:
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       PAYMENT_PROVIDER_URL: http://payment-provider-mock:8010
-    command: ["taskiq", "scheduler", "app.taskiq:scheduler"]
+    command: ["taskiq", "scheduler", "app.entrypoints.workers.taskiq:scheduler"]
     depends_on:
       redis:
         condition: service_healthy
