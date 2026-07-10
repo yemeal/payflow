@@ -1,7 +1,8 @@
 import structlog
 from faststream import FastStream, AckPolicy
-from faststream.kafka import KafkaBroker
+from faststream.kafka import KafkaBroker, KafkaMessage
 from dishka_faststream import setup_dishka, FromDishka
+from pydantic import ValidationError
 
 from app.infrastructure.di import create_container
 from app.core.logging import setup_logging
@@ -10,7 +11,12 @@ from app.entrypoints.messaging.schemas.commands import (
     ProcessPaymentCommand,
     CommandMetadata,
 )
+from app.entrypoints.messaging.exceptions import UnknownCommandError
 from app.entrypoints.http.schemas.payments import PaymentCreate, PaymentResponse
+from app.application.exceptions.idempotency import (
+    IdempotencyKeyPayloadMismatchError,
+    IdempotencyStateInconsistencyError,
+)
 from app.application.services.idempotency import IdempotencyService
 from app.application.services.payment_service import PaymentServiceProtocol
 
@@ -27,15 +33,29 @@ container = create_container()
 setup_dishka(container=container, broker=broker, auto_inject=True)
 
 
+# Ошибки, при которых повтор бессмыслен: битые данные, неизвестный тип команды,
+# логически несовместимый payload. Такие команды уводим в DLQ и коммитим offset,
+# чтобы не потерять их молча и не заблокировать партицию бесконечными ретраями.
+# Всё остальное (Redis/БД/провайдер недоступны и прочие временные сбои) считаем
+# восстановимым: пробрасываем исключение -> NACK_ON_ERROR -> Kafka переигрывает
+# команду до восстановления зависимости; дубли гасит Two-Level Idempotency.
+NON_RETRIABLE_ERRORS: tuple[type[Exception], ...] = (
+    ValidationError,
+    UnknownCommandError,
+    IdempotencyKeyPayloadMismatchError,
+    IdempotencyStateInconsistencyError,
+)
+
+
 class CommandRouter:
-    """Роутер для маршрутизации команд по их типу"""
+    """Роутер команд: по типу выбирает схему валидации и обработчик."""
 
     def __init__(self):
         self._handlers = {}
 
-    def register(self, command_type: str):
+    def register(self, command_type: str, schema: type):
         def decorator(func):
-            self._handlers[command_type] = func
+            self._handlers[command_type] = (schema, func)
             return func
 
         return decorator
@@ -47,24 +67,30 @@ class CommandRouter:
         payment_service: PaymentServiceProtocol,
         idempotency_service: IdempotencyService,
     ):
-        handler = self._handlers.get(command_type)
-        if not handler:
-            logger.error("no_handler_found_for_command", command_type=command_type)
-            return None
-        return await handler(msg, payment_service, idempotency_service)
+        entry = self._handlers.get(command_type)
+        if entry is None:
+            # раньше здесь молча возвращали None (offset коммитился, команда терялась);
+            # теперь это явная невосстановимая ошибка -> уходит в DLQ
+            raise UnknownCommandError(command_type)
+
+        schema, handler = entry
+        # Валидация здесь, в единой точке под политикой обработки ошибок:
+        # ValidationError отсюда попадает в NON_RETRIABLE_ERRORS и уводится в DLQ,
+        # а не всплывает необёрнутой в NACK (иначе битый payload = poison pill,
+        # который переигрывается бесконечно и блокирует партицию).
+        command = schema.model_validate(msg)
+        return await handler(command, payment_service, idempotency_service)
 
 
 router = CommandRouter()
 
 
-@router.register("payment.process")
+@router.register("payment.process", ProcessPaymentCommand)
 async def handle_process_payment_command(
-    msg: dict,
+    command: ProcessPaymentCommand,
     payment_service: PaymentServiceProtocol,
     idempotency_service: IdempotencyService,
 ):
-    # Валидируем через Pydantic
-    command = ProcessPaymentCommand.model_validate(msg)
     idempotency_key = str(command.metadata.command_id)
 
     payload = PaymentCreate(
@@ -97,6 +123,76 @@ async def handle_process_payment_command(
         return response
 
 
+async def send_command_to_dlq(
+    msg: dict, error: Exception, message: KafkaMessage | None
+) -> None:
+    """
+    Публикует невосстановимую команду в DLQ-топик с диагностическими заголовками.
+
+    Если публикация в DLQ не удалась, пробрасываем исключение: тогда сработает NACK
+    и команда не потеряется (будет доставлена повторно и снова попробует уйти в DLQ).
+    """
+    partition = ""
+    offset = ""
+    if message is not None:
+        raw = getattr(message, "raw_message", None)
+        partition = str(getattr(raw, "partition", ""))
+        offset = str(getattr(raw, "offset", ""))
+
+    headers = {
+        "x-error-type": type(error).__name__,
+        "x-error-detail": str(error)[:500],
+        "x-original-topic": settings.KAFKA_COMMANDS_TOPIC,
+        "x-original-partition": partition,
+        "x-original-offset": offset,
+    }
+    await broker.publish(
+        msg,
+        topic=settings.KAFKA_COMMANDS_DLQ_TOPIC,
+        headers=headers,
+    )
+    logger.error(
+        "command_sent_to_dlq",
+        dlq_topic=settings.KAFKA_COMMANDS_DLQ_TOPIC,
+        error_type=type(error).__name__,
+        error=str(error),
+        original_partition=partition,
+        original_offset=offset,
+    )
+
+
+async def process_command_message(
+    msg: dict,
+    payment_service: PaymentServiceProtocol,
+    idempotency_service: IdempotencyService,
+    message: KafkaMessage | None = None,
+) -> None:
+    """
+    Граничная логика обработки одной команды с политикой ошибок.
+
+    Вынесена из подписчика отдельной чистой функцией, чтобы её можно было
+    тестировать без FastStream. Правило:
+      - NON_RETRIABLE_ERRORS (битые данные / неизвестная команда) -> DLQ, затем ACK;
+      - всё остальное -> исключение всплывает -> NACK_ON_ERROR -> переигрывание.
+    """
+    try:
+        metadata = CommandMetadata.model_validate(msg.get("metadata", {}))
+        logger.info("routing_command", command_type=metadata.command_type)
+        await router.handle(
+            command_type=metadata.command_type,
+            msg=msg,
+            payment_service=payment_service,
+            idempotency_service=idempotency_service,
+        )
+    except NON_RETRIABLE_ERRORS as e:
+        # невосстановимо (битые данные / неизвестная команда): в DLQ и ACK.
+        # штатный возврат после успешной публикации коммитит offset.
+        await send_command_to_dlq(msg, e, message)
+    # Любая другая ошибка (Redis/БД/провайдер недоступны, неожиданный сбой)
+    # НЕ перехватывается здесь: она всплывает -> NACK_ON_ERROR -> Kafka
+    # переигрывает команду. Так временные сбои не приводят к потере команд.
+
+
 # group_id обязателен: без него offset'ы не коммитятся в Kafka,
 # и любой рестарт контейнера теряет команды, пришедшие во время даунтайма.
 # NACK_ON_ERROR: ack только после успешной обработки (at-least-once),
@@ -111,21 +207,13 @@ async def handle_commands(
     msg: dict,
     payment_service: FromDishka[PaymentServiceProtocol],
     idempotency_service: FromDishka[IdempotencyService],
+    message: KafkaMessage,
 ):
-    try:
-        meta_dict = msg.get("metadata", {})
-        metadata = CommandMetadata.model_validate(meta_dict)
-        command_type = metadata.command_type
-    except Exception as e:
-        logger.error("invalid_command_metadata", error=str(e), msg=msg)
-        return
-
-    logger.info("routing_command", command_type=command_type)
-    await router.handle(
-        command_type=command_type,
+    await process_command_message(
         msg=msg,
         payment_service=payment_service,
         idempotency_service=idempotency_service,
+        message=message,
     )
 
 

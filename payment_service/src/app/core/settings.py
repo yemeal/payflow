@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     KAFKA_BOOTSTRAP_SERVERS: str
     KAFKA_EVENTS_TOPIC: str = "payments.events"
     KAFKA_COMMANDS_TOPIC: str = "payments.commands"
+    # DLQ для команд, обработка которых невосстановима (битые данные, неизвестный тип):
+    # такие сообщения уводятся сюда и коммитятся, чтобы не блокировать партицию
+    KAFKA_COMMANDS_DLQ_TOPIC: str = "payments.commands.dlq"
     KAFKA_CONSUMER_GROUP: str = "payment-service-commands"
 
     # --- outbox ---
