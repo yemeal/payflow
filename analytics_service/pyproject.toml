@@ -29,3 +29,17 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 package-mode = false
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.1.1,<10.0.0)",
+    "pytest-asyncio (>=1.4.0,<2.0.0)"
+]
+
+# аналогично payment_service: запуск pytest из корня сервиса,
+# пакет app берется из src, async-тесты без обязательного маркера.
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["src/tests"]
+asyncio_mode = "auto"
+addopts = "-ra"
