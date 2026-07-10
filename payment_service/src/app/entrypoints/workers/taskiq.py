@@ -3,7 +3,7 @@ from dishka import AsyncContainer
 from dishka.integrations.taskiq import setup_dishka
 from taskiq import TaskiqScheduler, TaskiqEvents, TaskiqState
 from taskiq.schedule_sources import LabelScheduleSource
-from taskiq_redis import RedisStreamBroker, RedisScheduleSource
+from taskiq_redis import RedisStreamBroker, ListRedisScheduleSource
 
 from app.infrastructure.di import create_container
 from app.core.logging import setup_logging
@@ -48,8 +48,9 @@ broker = RedisStreamBroker(
 )
 
 
-# создаем источник расписания в Redis
-schedule_source = RedisScheduleSource(
+# создаем источник расписания в Redis.
+# хранит расписания в Redis-списках
+schedule_source = ListRedisScheduleSource(
     url=settings.REDIS_URL,
     # префикс для ключей в Redis, чтобы отделить расписания этого сервиса
     prefix="payments.schedule",
