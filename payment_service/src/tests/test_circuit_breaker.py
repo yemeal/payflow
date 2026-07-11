@@ -1,15 +1,17 @@
 """
-Тесты Circuit Breaker
+Тесты Circuit Breaker.
 
-Проверяем полный жизненный цикл состояний:
-CLOSED → OPEN → HALF_OPEN → CLOSED
+Проверяем полный жизненный цикл состояний CLOSED -> OPEN -> HALF_OPEN -> CLOSED,
+fail-fast в OPEN, фильтрацию ошибок через is_failure и конкурентный доступ.
 
-Circuit Breaker — кастомная реализация, не зависит от внешних библиотек.
-Тестируем напрямую через метод call() без моков asyncio.Lock.
+Circuit Breaker - собственная реализация без внешних библиотек, тестируем напрямую
+через call() без моков asyncio.Lock.
+
+Формат документации: Проверяем / Успех / Нежелательное поведение.
 """
 
+import asyncio
 import pytest
-import time
 from unittest.mock import AsyncMock, patch
 
 from app.infrastructure.resilience.circuit_breaker import (
@@ -19,29 +21,15 @@ from app.infrastructure.resilience.circuit_breaker import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Фикстуры
-# ---------------------------------------------------------------------------
-
 @pytest.fixture
 def cb() -> CircuitBreaker:
-    """
-    Circuit Breaker с порогом 3 ошибки и таймаутом восстановления 0.1 секунды.
-    Маленький таймаут, чтобы тесты проходили быстро.
-    """
-    return CircuitBreaker(
-        fail_max=3,
-        recovery_timeout=0.1,
-        name="test-breaker",
-    )
+    """CB с порогом 3 ошибки и коротким таймаутом восстановления 0.1 c (для скорости тестов)."""
+    return CircuitBreaker(fail_max=3, recovery_timeout=0.1, name="test-breaker")
 
 
 @pytest.fixture
 def cb_with_filter() -> CircuitBreaker:
-    """
-    Circuit Breaker, который считает ошибками только ValueError.
-    ConnectionError, например, игнорируется.
-    """
+    """CB, который считает сбоем только ValueError; ConnectionError игнорирует."""
     return CircuitBreaker(
         fail_max=2,
         recovery_timeout=0.1,
@@ -50,35 +38,28 @@ def cb_with_filter() -> CircuitBreaker:
     )
 
 
-# ---------------------------------------------------------------------------
-# Вспомогательные функции
-# ---------------------------------------------------------------------------
-
 async def _success():
-    """Имитация успешного вызова"""
     return "ok"
 
 
 async def _fail():
-    """Имитация неудачного вызова"""
     raise ConnectionError("connection refused")
 
 
 async def _fail_value_error():
-    """Имитация ошибки, которую is_failure считает реальным сбоем"""
     raise ValueError("bad value")
 
 
-# ---------------------------------------------------------------------------
-# Тесты: Переход CLOSED → OPEN
-# ---------------------------------------------------------------------------
-
 class TestClosedToOpen:
-    """При превышении порога ошибок CB переходит из CLOSED в OPEN"""
+    """При накоплении ошибок до порога CB размыкается (CLOSED -> OPEN)."""
 
     @pytest.mark.asyncio
     async def test_stays_closed_below_threshold(self, cb):
-        """CB остаётся CLOSED пока ошибок меньше fail_max"""
+        """
+        Проверяем: число ошибок меньше fail_max.
+        Успех: состояние остаётся CLOSED, счётчик равен числу ошибок.
+        Нежелательное поведение: преждевременное размыкание до достижения порога.
+        """
         for _ in range(cb._fail_max - 1):
             with pytest.raises(ConnectionError):
                 await cb.call(_fail)
@@ -88,7 +69,11 @@ class TestClosedToOpen:
 
     @pytest.mark.asyncio
     async def test_trips_to_open_at_threshold(self, cb):
-        """CB переходит в OPEN когда количество ошибок достигает fail_max"""
+        """
+        Проверяем: число ошибок достигло fail_max.
+        Успех: CB переходит в OPEN, счётчик равен fail_max.
+        Нежелательное поведение: остаться в CLOSED и продолжать бить по сбойному провайдеру.
+        """
         for _ in range(cb._fail_max):
             with pytest.raises(ConnectionError):
                 await cb.call(_fail)
@@ -98,97 +83,88 @@ class TestClosedToOpen:
 
     @pytest.mark.asyncio
     async def test_success_resets_failure_count(self, cb):
-        """Успешный вызов в CLOSED сбрасывает счётчик ошибок"""
-        # накапливаем 2 ошибки (из 3 для trip)
+        """
+        Проверяем: успешный вызов после серии ошибок (но до порога).
+        Успех: счётчик ошибок сбрасывается в 0, состояние CLOSED.
+        Нежелательное поведение: накопление ошибок не обнуляется и CB рано или поздно
+                   ложно размыкается на редких единичных сбоях.
+        """
         for _ in range(cb._fail_max - 1):
             with pytest.raises(ConnectionError):
                 await cb.call(_fail)
-
         assert cb._failure_count == cb._fail_max - 1
 
-        # успешный вызов должен сбросить счётчик
         result = await cb.call(_success)
+
         assert result == "ok"
         assert cb._failure_count == 0
         assert cb._state == CircuitState.CLOSED
 
 
-# ---------------------------------------------------------------------------
-# Тесты: В состоянии OPEN запросы отклоняются
-# ---------------------------------------------------------------------------
-
 class TestOpenRejects:
-    """В состоянии OPEN все запросы мгновенно отклоняются (fail fast)"""
+    """В состоянии OPEN запросы мгновенно отклоняются, не доходя до функции."""
 
     @pytest.mark.asyncio
     async def test_open_rejects_without_calling_func(self, cb):
-        """В OPEN запросы отклоняются CircuitBreakerError без вызова функции"""
-        # доводим до OPEN
+        """
+        Проверяем: вызов в состоянии OPEN.
+        Успех: поднимается CircuitBreakerError, защищаемая функция не вызвана вообще.
+        Нежелательное поведение: запрос всё-таки уходит к недоступному провайдеру.
+        """
         for _ in range(cb._fail_max):
             with pytest.raises(ConnectionError):
                 await cb.call(_fail)
-
         assert cb._state == CircuitState.OPEN
 
-        # следующий вызов должен быть отклонён без реального вызова функции
-        mock_func = AsyncMock()
+        guarded = AsyncMock()
         with pytest.raises(CircuitBreakerError):
-            await cb.call(mock_func)
+            await cb.call(guarded)
 
-        # функция НЕ должна была быть вызвана
-        mock_func.assert_not_called()
+        guarded.assert_not_called()
 
-
-# ---------------------------------------------------------------------------
-# Тесты: Переход OPEN → HALF_OPEN после таймаута
-# ---------------------------------------------------------------------------
 
 class TestOpenToHalfOpen:
-    """После истечения recovery_timeout CB переходит из OPEN в HALF_OPEN"""
+    """После recovery_timeout CB пробует один пробный запрос (HALF_OPEN)."""
 
     @pytest.mark.asyncio
     async def test_transitions_to_half_open_after_timeout(self, cb):
-        """CB переходит в HALF_OPEN после recovery_timeout"""
-        # доводим до OPEN
+        """
+        Проверяем: истёк recovery_timeout, приходит успешный пробный запрос.
+        Успех: CB пропускает вызов, при успехе сразу закрывается (CLOSED), счётчик 0.
+        Нежелательное поведение: вечная блокировка в OPEN даже после восстановления провайдера.
+        """
         for _ in range(cb._fail_max):
             with pytest.raises(ConnectionError):
                 await cb.call(_fail)
-
         assert cb._state == CircuitState.OPEN
 
-        # подменяем время, чтобы recovery_timeout истёк
-        original_opened_at = cb._opened_at
+        opened_at = cb._opened_at
         with patch("app.infrastructure.resilience.circuit_breaker.time") as mock_time:
-            mock_time.monotonic.return_value = original_opened_at + cb._recovery_timeout + 0.01
-
-            # следующий вызов должен перевести в HALF_OPEN и выполнить функцию
+            mock_time.monotonic.return_value = opened_at + cb._recovery_timeout + 0.01
             result = await cb.call(_success)
 
         assert result == "ok"
-        assert cb._state == CircuitState.CLOSED  # успех → сразу CLOSED
+        assert cb._state == CircuitState.CLOSED
         assert cb._failure_count == 0
 
 
-# ---------------------------------------------------------------------------
-# Тесты: Успешный запрос в HALF_OPEN → CLOSED
-# ---------------------------------------------------------------------------
-
-class TestHalfOpenToClosed:
-    """Успешный пробный запрос в HALF_OPEN переводит CB обратно в CLOSED"""
+class TestHalfOpenTransitions:
+    """Пробный запрос в HALF_OPEN решает судьбу цепи."""
 
     @pytest.mark.asyncio
     async def test_success_in_half_open_closes_circuit(self, cb):
-        """Успех в HALF_OPEN → CLOSED, счётчик ошибок сбрасывается"""
-        # доводим до OPEN
+        """
+        Проверяем: пробный запрос в HALF_OPEN прошёл успешно.
+        Успех: CB закрывается (CLOSED), счётчик 0, opened_at сброшен.
+        Нежелательное поведение: остаться в HALF_OPEN или OPEN после доказанного восстановления.
+        """
         for _ in range(cb._fail_max):
             with pytest.raises(ConnectionError):
                 await cb.call(_fail)
-
-        # вручную переводим в HALF_OPEN (имитируем истечение таймаута)
         cb._state = CircuitState.HALF_OPEN
 
-        # успешный пробный запрос
         result = await cb.call(_success)
+
         assert result == "ok"
         assert cb._state == CircuitState.CLOSED
         assert cb._failure_count == 0
@@ -196,16 +172,16 @@ class TestHalfOpenToClosed:
 
     @pytest.mark.asyncio
     async def test_failure_in_half_open_returns_to_open(self, cb):
-        """Ошибка в HALF_OPEN возвращает CB в OPEN"""
-        # доводим до OPEN
+        """
+        Проверяем: пробный запрос в HALF_OPEN снова упал.
+        Успех: CB возвращается в OPEN, opened_at заново выставлен (отсчёт таймаута сначала).
+        Нежелательное поведение: закрыться при неудачной пробе и пропустить лавину запросов.
+        """
         for _ in range(cb._fail_max):
             with pytest.raises(ConnectionError):
                 await cb.call(_fail)
-
-        # вручную переводим в HALF_OPEN
         cb._state = CircuitState.HALF_OPEN
 
-        # неудачный пробный запрос
         with pytest.raises(ConnectionError):
             await cb.call(_fail)
 
@@ -213,30 +189,55 @@ class TestHalfOpenToClosed:
         assert cb._opened_at is not None
 
 
-# ---------------------------------------------------------------------------
-# Тесты: Фильтрация ошибок (is_failure)
-# ---------------------------------------------------------------------------
-
 class TestIsFailureFilter:
-    """Проверяем, что is_failure корректно фильтрует ошибки"""
+    """is_failure отделяет реальные сбои от ошибок, которые не должны трогать цепь."""
 
     @pytest.mark.asyncio
     async def test_non_failure_errors_dont_count(self, cb_with_filter):
-        """Ошибки, не прошедшие is_failure, не увеличивают счётчик"""
-        # ConnectionError не считается сбоем для cb_with_filter
+        """
+        Проверяем: ошибки, не прошедшие is_failure (ConnectionError).
+        Успех: счётчик не растёт, состояние остаётся CLOSED даже после многих ошибок.
+        Нежелательное поведение: посторонние ошибки размыкают цепь и рубят рабочий провайдер.
+        """
         for _ in range(5):
             with pytest.raises(ConnectionError):
                 await cb_with_filter.call(_fail)
 
-        # счётчик не должен был увеличиться
         assert cb_with_filter._failure_count == 0
         assert cb_with_filter._state == CircuitState.CLOSED
 
     @pytest.mark.asyncio
     async def test_matching_errors_trip_breaker(self, cb_with_filter):
-        """Ошибки, прошедшие is_failure (ValueError), трипают CB"""
+        """
+        Проверяем: ошибки, прошедшие is_failure (ValueError).
+        Успех: при достижении порога CB размыкается (OPEN).
+        Нежелательное поведение: реальные сбои игнорируются фильтром.
+        """
         for _ in range(cb_with_filter._fail_max):
             with pytest.raises(ValueError):
                 await cb_with_filter.call(_fail_value_error)
 
         assert cb_with_filter._state == CircuitState.OPEN
+
+
+class TestConcurrency:
+    """Внутренний lock защищает от гонок при залповом трафике."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_failures_trip_exactly_once(self, cb):
+        """
+        Проверяем: пачка одновременных сбоев больше порога.
+        Успех: CB оказывается в OPEN, счётчик не меньше порога; гонок за состояние нет
+               (lock сериализует переходы).
+        Нежелательное поведение: рассинхронизация счётчика и состояния при параллельных вызовах.
+        """
+        async def call_and_swallow():
+            try:
+                await cb.call(_fail)
+            except (ConnectionError, CircuitBreakerError):
+                pass
+
+        await asyncio.gather(*[call_and_swallow() for _ in range(20)])
+
+        assert cb._state == CircuitState.OPEN
+        assert cb._failure_count >= cb._fail_max
