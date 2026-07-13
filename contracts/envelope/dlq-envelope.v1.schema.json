@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.envelope.dlq-envelope.v1",
+  "title": "Конверт сообщения в <топик>.dlq",
+  "type": "object",
+  "properties": {
+    "original": {"type": "object", "description": "Исходное сообщение как есть"},
+    "dlqMeta": {
+      "type": "object",
+      "properties": {
+        "sourceTopic": {"type": "string", "description": "Куда переигрывать при re-drive"},
+        "partition": {"type": "integer"},
+        "offset": {"type": "integer"},
+        "consumerGroup": {"type": "string"},
+        "errorClass": {"type": "string"},
+        "errorMessage": {"type": "string"},
+        "retryCount": {"type": "integer", "minimum": 0},
+        "redriveCount": {"type": "integer", "minimum": 0, "description": "Инкремент при каждой переигровке; лимит 2"},
+        "failedAt": {"type": "string", "format": "date-time"}
+      },
+      "required": ["sourceTopic", "errorClass", "errorMessage", "failedAt"],
+      "additionalProperties": true
+    }
+  },
+  "required": ["original", "dlqMeta"],
+  "additionalProperties": false
+}

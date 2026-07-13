@@ -38,7 +38,9 @@ package-mode = false
 [dependency-groups]
 dev = [
     "pytest (>=9.1.1,<10.0.0)",
-    "pytest-asyncio (>=1.4.0,<2.0.0)"
+    "pytest-asyncio (>=1.4.0,<2.0.0)",
+    # контракт-тесты валидируют конверты против JSON Schema из contracts/
+    "jsonschema (>=4.25.0,<5.0.0)"
 ]
 
 # конфиг pytest держим здесь, чтобы тесты запускались из корня сервиса

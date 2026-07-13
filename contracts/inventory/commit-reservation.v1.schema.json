@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.inventory.commit-reservation.v1",
+  "title": "inventory.commit_reservation - атомарно списать товар и снять резерв (inventory.commands)",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "allOf": [{"$ref": "../envelope/command-metadata.v1.schema.json"}],
+      "properties": {"commandType": {"const": "inventory.commit_reservation"}},
+      "required": ["sagaId", "businessKey"]
+    },
+    "data": {
+      "type": "object",
+      "properties": {"orderId": {"type": "string", "format": "uuid"}},
+      "required": ["orderId"],
+      "additionalProperties": true
+    }
+  },
+  "required": ["metadata", "data"]
+}

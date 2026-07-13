@@ -13,6 +13,11 @@ class CommandMetadata(CamelCaseBase):
     version: str = "1.0"
     timestamp: datetime
     source: str
+    # correlation саги (contracts/envelope/command-metadata.v1): непрозрачные
+    # значения, echo'ятся в metadata.correlation событий этого платежа;
+    # None - команда вне саги
+    saga_id: uuid.UUID | None = None
+    business_key: str | None = None
 
 
 class ProcessPaymentPayload(CamelCaseBase):

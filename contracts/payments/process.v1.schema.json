@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.payments.process.v1",
+  "title": "payment.process - команда оплаты (payments.commands, контракт payment_service)",
+  "description": "Команда оплаты. payment_service запоминает metadata.{sagaId, businessKey, commandId} в транспортном журнале корреляций (не в домене платежа!) и echo'ит их в metadata.correlation всех событий по этому платежу. customerId - идентификатор ПОЛЬЗОВАТЕЛЯ (userId), а не заказа; связь события с сагой идёт исключительно через metadata.correlation.",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "allOf": [{"$ref": "../envelope/command-metadata.v1.schema.json"}],
+      "properties": {"commandType": {"const": "payment.process"}},
+      "required": ["sagaId", "businessKey"]
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "amount": {"type": "string", "pattern": "^\\d+(\\.\\d{1,2})?$"},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "customerId": {"type": "string", "description": "ID пользователя-плательщика (userId заказа)"},
+        "description": {"type": "string", "maxLength": 1000}
+      },
+      "required": ["amount", "currency", "customerId"],
+      "additionalProperties": true
+    }
+  },
+  "required": ["metadata", "data"]
+}

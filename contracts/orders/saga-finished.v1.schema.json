@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.orders.saga-finished.v1",
+  "title": "saga.completed / saga.cancelled / saga.failed - финализация заказа (orders.events)",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "allOf": [{"$ref": "../envelope/event-metadata.v1.schema.json"}],
+      "properties": {"event_type": {"enum": ["saga.completed", "saga.cancelled", "saga.failed"]}}
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "orderId": {"type": "string", "format": "uuid"},
+        "status": {"enum": ["COMPLETED", "CANCELLED", "FAILED"], "description": "Целевой статус заказа; FAILED у заказа маппится в CANCELLED + алерт"},
+        "reason": {"type": "string", "description": "Человекочитаемая причина (для CANCELLED/FAILED)"}
+      },
+      "required": ["orderId", "status"],
+      "additionalProperties": true
+    }
+  },
+  "required": ["metadata", "data"]
+}

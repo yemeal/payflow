@@ -19,6 +19,10 @@ class EventEnvelopeMetadata(BaseModel):
     version: str = "1.0"
     timestamp: datetime
     source: str = "payment-service"
+    # echo-блок команды саги (contracts/README п.1). Заполняется НЕ здесь и не в
+    # relay, а транспортным адаптером при публикации (CorrelationEnrichingPublisher):
+    # корреляция - метадата сообщения, домену и application-слою она не принадлежит.
+    correlation: dict[str, Any] | None = None
 
 
 class EventEnvelope(BaseModel):

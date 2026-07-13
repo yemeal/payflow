@@ -37,15 +37,32 @@ from app.domain.payments import Payment, PaymentStatus
 # ---------------------------------------------------------------------------
 
 
-def make_command(amount="150.00", currency="USD", command_id=None):
-    """Валидный конверт команды payment.process."""
+def make_command(
+    amount="150.00",
+    currency="USD",
+    command_id=None,
+    saga_id=None,
+    business_key=None,
+):
+    """
+    Валидный конверт команды payment.process.
+
+    saga_id/business_key задаются только когда команда пришла из саги: без них
+    консьюмер не должен трогать журнал корреляций (платёж вне саги).
+    """
+    metadata = {
+        "commandId": command_id or "12345678-1234-5678-1234-567812345678",
+        "commandType": "payment.process",
+        "timestamp": "2026-07-08T04:29:50Z",
+        "source": "orchestrator",
+    }
+    if saga_id is not None:
+        metadata["sagaId"] = saga_id
+    if business_key is not None:
+        metadata["businessKey"] = business_key
+
     return {
-        "metadata": {
-            "commandId": command_id or "12345678-1234-5678-1234-567812345678",
-            "commandType": "payment.process",
-            "timestamp": "2026-07-08T04:29:50Z",
-            "source": "orchestrator",
-        },
+        "metadata": metadata,
         "data": {
             "amount": amount,
             "currency": currency,
@@ -53,6 +70,11 @@ def make_command(amount="150.00", currency="USD", command_id=None):
             "description": "Integration Test",
         },
     }
+
+
+def make_correlations():
+    """Журнал корреляций команд (CommandCorrelationStoreProtocol) как AsyncMock."""
+    return AsyncMock()
 
 
 def make_idempotency_service(guard):
@@ -144,6 +166,7 @@ class TestProcessPaymentCommand:
             msg=make_command(),
             payment_service=payment_service,
             idempotency_service=idempotency_service,
+            correlations=make_correlations(),
         )
 
         payment_service.create.assert_called_once()
@@ -176,6 +199,7 @@ class TestProcessPaymentCommand:
             msg=make_command(),
             payment_service=payment_service,
             idempotency_service=idempotency_service,
+            correlations=make_correlations(),
         )
 
         assert result == {"id": "payment-123", "status": "PROCESSING"}
@@ -202,6 +226,7 @@ class TestProcessPaymentCommand:
                 msg=bad,
                 payment_service=payment_service,
                 idempotency_service=idempotency_service,
+                correlations=make_correlations(),
             )
         payment_service.create.assert_not_called()
 
@@ -230,6 +255,7 @@ class TestUnknownCommand:
                 msg={},
                 payment_service=payment_service,
                 idempotency_service=idempotency_service,
+                correlations=make_correlations(),
             )
 
         payment_service.create.assert_not_called()
@@ -333,7 +359,8 @@ class TestProcessCommandMessage:
             make_command(amount="-10.00"),
             payment_service,
             idempotency_service,
-            make_kafka_message(),
+            make_correlations(),
+            message=make_kafka_message(),
         )
 
         publish.assert_awaited_once()
@@ -359,7 +386,11 @@ class TestProcessCommandMessage:
         msg["metadata"]["commandType"] = "totally.unknown"
 
         await process_command_message(
-            msg, payment_service, MagicMock(), make_kafka_message()
+            msg,
+            payment_service,
+            MagicMock(),
+            make_correlations(),
+            message=make_kafka_message(),
         )
 
         publish.assert_awaited_once()
@@ -382,7 +413,11 @@ class TestProcessCommandMessage:
         msg = {"metadata": {"commandType": "payment.process"}, "data": {}}
 
         await process_command_message(
-            msg, make_payment_service(), MagicMock(), make_kafka_message()
+            msg,
+            make_payment_service(),
+            MagicMock(),
+            make_correlations(),
+            message=make_kafka_message(),
         )
 
         publish.assert_awaited_once()
@@ -406,7 +441,176 @@ class TestProcessCommandMessage:
                 make_command(),
                 payment_service,
                 idempotency_service,
-                make_kafka_message(),
+                make_correlations(),
+                message=make_kafka_message(),
             )
 
         publish.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Транспортная корреляция саги (журнал command_correlations)
+# ---------------------------------------------------------------------------
+
+SAGA_ID = "11111111-2222-3333-4444-555555555555"
+COMMAND_ID = "12345678-1234-5678-1234-567812345678"
+
+
+def make_created_payment(idempotency_key=COMMAND_ID) -> Payment:
+    """Платёж, который вернёт payment_service.create."""
+    return Payment(
+        id=uuid4(),
+        idempotency_key=idempotency_key,
+        amount=Decimal("150.00"),
+        currency="USD",
+        status=PaymentStatus.PROCESSING,
+        customer_id="cust_12345",
+        description="Integration Test",
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+class TestCommandCorrelation:
+    """
+    Корреляция саги пишется в журнал ДО создания платежа.
+
+    Порядок здесь - не стилистика, а гонка: relay публикует события из outbox
+    асинхронно и может успеть отправить payment.pending раньше, чем correlation
+    попадёт в журнал. Тогда CorrelationEnrichingPublisher не найдёт её,
+    событие уедет без echo, и оркестратор не сматчит ответ с шагом саги.
+    """
+
+    @pytest.mark.asyncio
+    async def test_remember_called_before_create(self):
+        """
+        Проверяем: порядок вызовов при команде из саги.
+        Успех: correlations.remember вызван СТРОГО до payment_service.create.
+        Нежелательное поведение: create раньше remember -> relay успевает
+               опубликовать событие без корреляции, ответ саги теряется.
+        """
+        payment_service = make_payment_service()
+        payment_service.create.return_value = make_created_payment()
+        correlations = make_correlations()
+
+        # общий менеджер: mock_calls хранит вызовы обоих моков в общем порядке
+        manager = MagicMock()
+        manager.attach_mock(correlations.remember, "remember")
+        manager.attach_mock(payment_service.create, "create")
+
+        await router.handle(
+            command_type="payment.process",
+            msg=make_command(saga_id=SAGA_ID, business_key="order-42"),
+            payment_service=payment_service,
+            idempotency_service=make_idempotency_service(make_fresh_guard()),
+            correlations=correlations,
+        )
+
+        order = [name for name, _, _ in manager.mock_calls if name in ("remember", "create")]
+        assert order == ["remember", "create"]
+
+    @pytest.mark.asyncio
+    async def test_remember_receives_contract_correlation(self):
+        """
+        Проверяем: что именно кладётся в журнал корреляций.
+        Успех: ключ - command_id (он же ключ идемпотентности платежа), значение -
+               словарь {sagaId, businessKey, commandId} строками (правило echo).
+        Нежелательное поведение: потеря businessKey или UUID-объекты вместо строк -
+               echo-блок не сериализуется в JSONB/конверт как надо.
+        """
+        payment_service = make_payment_service()
+        payment_service.create.return_value = make_created_payment()
+        correlations = make_correlations()
+
+        await router.handle(
+            command_type="payment.process",
+            msg=make_command(
+                command_id=COMMAND_ID, saga_id=SAGA_ID, business_key="order-42"
+            ),
+            payment_service=payment_service,
+            idempotency_service=make_idempotency_service(make_fresh_guard()),
+            correlations=correlations,
+        )
+
+        correlations.remember.assert_awaited_once_with(
+            command_id=COMMAND_ID,
+            correlation={
+                "sagaId": SAGA_ID,
+                "businessKey": "order-42",
+                "commandId": COMMAND_ID,
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_command_without_saga_id_skips_remember(self):
+        """
+        Проверяем: команда вне саги (без sagaId).
+        Успех: remember НЕ вызывается, платёж всё равно создаётся - события
+               просто уедут без correlation, оркестратор их проигнорирует.
+        Нежелательное поведение: мусорные записи в журнале корреляций либо падение
+               обработки команд, пришедших не из саги.
+        """
+        payment_service = make_payment_service()
+        payment_service.create.return_value = make_created_payment()
+        correlations = make_correlations()
+
+        await router.handle(
+            command_type="payment.process",
+            msg=make_command(),
+            payment_service=payment_service,
+            idempotency_service=make_idempotency_service(make_fresh_guard()),
+            correlations=correlations,
+        )
+
+        correlations.remember.assert_not_awaited()
+        payment_service.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_command_without_business_key_skips_remember(self):
+        """
+        Проверяем: неполная корреляция (есть sagaId, нет businessKey).
+        Успех: remember НЕ вызывается - половинчатый echo-блок нарушил бы контракт
+               (sagaId, businessKey и commandId обязательны все три).
+        Нежелательное поведение: в журнал попадает correlation с businessKey=None,
+               и событие уезжает с невалидным по схеме блоком корреляции.
+        """
+        payment_service = make_payment_service()
+        payment_service.create.return_value = make_created_payment()
+        correlations = make_correlations()
+
+        await router.handle(
+            command_type="payment.process",
+            msg=make_command(saga_id=SAGA_ID),
+            payment_service=payment_service,
+            idempotency_service=make_idempotency_service(make_fresh_guard()),
+            correlations=correlations,
+        )
+
+        correlations.remember.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_store_failure_is_retriable_not_dlq(self, monkeypatch):
+        """
+        Проверяем: журнал корреляций недоступен (БД лежит) при обработке команды саги.
+        Успех: исключение всплывает (NACK -> переигрывание), в DLQ команда НЕ уходит,
+               платёж не создаётся.
+        Нежелательное поведение: временный сбой БД уводит команду в DLQ (ручной разбор)
+               либо платёж создаётся без корреляции и ответ саги теряется навсегда.
+        """
+        publish = AsyncMock()
+        monkeypatch.setattr(consumer_module.broker, "publish", publish)
+
+        payment_service = make_payment_service()
+        correlations = make_correlations()
+        correlations.remember.side_effect = RuntimeError("db is down")
+
+        with pytest.raises(RuntimeError):
+            await process_command_message(
+                make_command(saga_id=SAGA_ID, business_key="order-42"),
+                payment_service,
+                make_idempotency_service(make_fresh_guard()),
+                correlations,
+                message=make_kafka_message(),
+            )
+
+        publish.assert_not_awaited()
+        payment_service.create.assert_not_called()

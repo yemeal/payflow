@@ -1,0 +1,40 @@
+[project]
+name = "dlq-watcher"
+version = "0.1.0"
+description = "Единая точка наблюдения за DLQ-топиками платформы: лог + мок-алерт + метрики"
+authors = [
+    {name = "yemeal",email = "emelyalex@bk.ru"}
+]
+requires-python = ">=3.14,<4"
+dependencies = [
+    "pydantic (>=2.13.4,<3.0.0)",
+    "pydantic-settings (>=2.14.1,<3.0.0)",
+    "structlog (>=25.5.0,<26.0.0)",
+    "aiokafka (>=0.14.0,<0.15.0)",
+    "faststream[kafka] (>=0.7.1,<0.8.0)",
+    "dishka (>=1.10.1,<2.0.0)",
+    "dishka-faststream (>=0.7.0,<0.8.0)",
+    "prometheus-client (>=0.23.0,<1.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+package-mode = false
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.1.1,<10.0.0)",
+    "pytest-asyncio (>=1.4.0,<2.0.0)"
+]
+
+# конфиг pytest держим здесь, чтобы тесты запускались из корня сервиса
+# (pythonpath=src делает пакет app импортируемым без cd в src).
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["src/tests"]
+asyncio_mode = "auto"
+addopts = "-ra"

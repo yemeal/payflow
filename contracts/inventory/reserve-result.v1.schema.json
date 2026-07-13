@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.inventory.reserve-result.v1",
+  "title": "inventory.reserved / inventory.reserve-failed (orders.events)",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "allOf": [{"$ref": "../envelope/event-metadata.v1.schema.json"}],
+      "properties": {"event_type": {"enum": ["inventory.reserved", "inventory.reserve-failed"]}},
+      "required": ["correlation"]
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "orderId": {"type": "string", "format": "uuid"},
+        "expiresAt": {"type": "string", "format": "date-time", "description": "Момент автоистечения резерва (для inventory.reserved)"},
+        "failure": {"$ref": "../envelope/failure.v1.schema.json"}
+      },
+      "required": ["orderId"],
+      "additionalProperties": true
+    }
+  },
+  "required": ["metadata", "data"],
+  "if": {"properties": {"metadata": {"properties": {"event_type": {"const": "inventory.reserve-failed"}}}}},
+  "then": {"properties": {"data": {"required": ["orderId", "failure"]}}}
+}

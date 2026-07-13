@@ -34,8 +34,15 @@ from app.application.services.payment_service import (
     PaymentServiceProtocol,
 )
 from app.application.services.outbox_relay import OutboxRelayService
+from app.application.ports.correlation import CommandCorrelationStoreProtocol
 from app.application.ports.outbox_publisher import OutboxPublisherProtocol, OutboxScopeFactory
-from app.infrastructure.brokers.adapters import KafkaOutboxPublisher
+from app.infrastructure.brokers.adapters import (
+    CorrelationEnrichingPublisher,
+    KafkaOutboxPublisher,
+)
+from app.infrastructure.database.repositories.correlation_repository import (
+    SQLAlchemyCommandCorrelationStore,
+)
 from app.infrastructure.di.outbox_scope import DishkaOutboxScopeFactory
 from app.infrastructure.resilience.circuit_breaker import CircuitBreaker
 from app.application.ports.uow import AsyncUOWProtocol
@@ -126,6 +133,14 @@ class ServiceProvider(Provider):
     def provide_idempotency_storage(self, redis: Redis) -> IdempotencyStorageProtocol:
         return RedisIdempotencyStorage(redis)
 
+    @provide(scope=Scope.APP)
+    def provide_correlation_store(
+        self, sessionmaker: async_sessionmaker[AsyncSession]
+    ) -> CommandCorrelationStoreProtocol:
+        # APP scope: журнал корреляций нужен и консьюмеру (запись), и relay (чтение),
+        # поэтому адаптер работает на собственных коротких сессиях
+        return SQLAlchemyCommandCorrelationStore(sessionmaker)
+
     @provide(scope=Scope.REQUEST)
     def provide_idempotency_service(
         self, storage: IdempotencyStorageProtocol, settings: Settings
@@ -174,9 +189,17 @@ class KafkaProvider(Provider):
 
     @provide(scope=Scope.APP)
     def provide_outbox_publisher(
-        self, producer: AIOKafkaProducer, settings: Settings
+        self,
+        producer: AIOKafkaProducer,
+        settings: Settings,
+        correlations: CommandCorrelationStoreProtocol,
     ) -> OutboxPublisherProtocol:
-        return KafkaOutboxPublisher(producer, topic=settings.KAFKA_EVENTS_TOPIC)
+        # корреляция саги проставляется на транспортном уровне, декоратором:
+        # relay и application-слой о ней не знают (contracts/README п.1)
+        return CorrelationEnrichingPublisher(
+            KafkaOutboxPublisher(producer, topic=settings.KAFKA_EVENTS_TOPIC),
+            correlations,
+        )
 
     @provide(scope=Scope.APP)
     def provide_outbox_scope_factory(

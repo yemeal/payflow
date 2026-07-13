@@ -1,4 +1,4 @@
-from typing import Protocol, Awaitable, Callable
+from typing import Any, Protocol, Awaitable, Callable
 
 import structlog
 
@@ -90,6 +90,7 @@ class PaymentService:
 
         # Вне транзакции: внешний HTTP-вызов провайдера
         provider_error = None
+        failure: dict[str, Any] | None = None
         try:
             provider_request = ProviderTransactionRequest(
                 amount=created_payment.amount,
@@ -101,9 +102,25 @@ class PaymentService:
             if response.transaction_id:
                 created_payment.external_id = response.transaction_id
                 created_payment.status = PaymentStatus.PROCESSING
-        except (ProviderIntegrationError, ProviderUnavailableError) as e:
+        except ProviderUnavailableError as e:
+            # внутренние ретраи и circuit breaker исчерпаны, но провайдер может
+            # ожить: для саги это ТЕХНИЧЕСКИЙ сбой (retriable=true)
             created_payment.status = PaymentStatus.FAILED
             provider_error = e
+            failure = {
+                "code": "provider_unavailable",
+                "message": str(e)[:500],
+                "retriable": True,
+            }
+        except ProviderIntegrationError as e:
+            # ошибка интеграции (4xx/битый ответ): повтор даст то же самое
+            created_payment.status = PaymentStatus.FAILED
+            provider_error = e
+            failure = {
+                "code": "provider_integration_error",
+                "message": str(e)[:500],
+                "retriable": False,
+            }
 
         logger.info(
             "payment status changed",
@@ -114,18 +131,35 @@ class PaymentService:
         # Транзакция 2: финальный статус + событие
         async with self._uow:
             created_payment = await self._payment_repository.update(created_payment)
-            await self._create_status_event(created_payment)
+            await self._create_status_event(created_payment, failure=failure)
 
         # Пробрасываем ошибку дальше уже после того, как UOW успешно закоммитил статус FAILED
         if provider_error:
             raise provider_error
         return created_payment
 
-    async def _create_status_event(self, payment: Payment) -> None:
-        """Записать событие о текущем статусе платежа в outbox (в рамках активной транзакции)"""
+    async def _create_status_event(
+        self, payment: Payment, failure: dict[str, Any] | None = None
+    ) -> None:
+        """Записать событие о текущем статусе платежа в outbox (в рамках активной транзакции).
+
+        Контракт (contracts/payments/payment-result.v1): каждое payment.failed обязано
+        нести data.failure {code, message, retriable} - по нему потребитель отличает
+        технический сбой (можно повторить) от бизнес-отказа (повтор бессмыслен)."""
+        # by_alias: контракт события требует camelCase в data (contracts/payments/*);
+        # без него на провод уезжал snake_case - см. contract-тест
+        payload = PaymentResponse.model_validate(payment).model_dump(
+            mode="json", by_alias=True
+        )
+        if payment.status is PaymentStatus.FAILED:
+            payload["failure"] = failure or {
+                "code": "unknown",
+                "message": "failure details are not available",
+                "retriable": False,
+            }
         outbox_event = OutboxEvent(
             event_type=f"payment.{payment.status.value.lower()}",
-            payload=PaymentResponse.model_validate(payment).model_dump(mode="json"),
+            payload=payload,
         )
         await self._outbox_repository.create(outbox_event)
 
@@ -179,16 +213,19 @@ class PaymentService:
 
         if payment.status != new_status:
             payment.status = new_status
+            # провайдер отклонил транзакцию: для саги это БИЗНЕС-отказ,
+            # повтор не поможет (карта отклонена и т.п.)
+            failure = None
+            if new_status is PaymentStatus.FAILED:
+                failure = {
+                    "code": "payment_declined",
+                    "message": "provider reported transaction failure",
+                    "retriable": False,
+                }
             async with self._uow:
                 # в одной транзакции обновляем статус и генерим событие в таблицу аутбокса о смене статуса
                 updated_payment = await self._payment_repository.update(payment)
-                outbox_event = OutboxEvent(
-                    event_type=f"payment.{updated_payment.status.value.lower()}",
-                    payload=PaymentResponse.model_validate(updated_payment).model_dump(
-                        mode="json"
-                    ),
-                )
-                await self._outbox_repository.create(outbox_event)
+                await self._create_status_event(updated_payment, failure=failure)
                 logger.info(
                     "payment status synced",
                     payment_id=str(updated_payment.id),

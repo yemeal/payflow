@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.inventory.commit-result.v1",
+  "title": "inventory.reservation-committed / inventory.commit-failed (orders.events)",
+  "description": "commit-failed на истёкшем резерве - нарушение инварианта TTL: оркестратор переводит сагу в FAILED (ручной разбор), retriable=false, code=reservation_expired.",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "allOf": [{"$ref": "../envelope/event-metadata.v1.schema.json"}],
+      "properties": {"event_type": {"enum": ["inventory.reservation-committed", "inventory.commit-failed"]}},
+      "required": ["correlation"]
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "orderId": {"type": "string", "format": "uuid"},
+        "failure": {"$ref": "../envelope/failure.v1.schema.json"}
+      },
+      "required": ["orderId"],
+      "additionalProperties": true
+    }
+  },
+  "required": ["metadata", "data"],
+  "if": {"properties": {"metadata": {"properties": {"event_type": {"const": "inventory.commit-failed"}}}}},
+  "then": {"properties": {"data": {"required": ["orderId", "failure"]}}}
+}

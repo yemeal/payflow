@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.envelope.command-metadata.v1",
+  "title": "Метаданные команды (camelCase)",
+  "type": "object",
+  "properties": {
+    "commandId": {"type": "string", "format": "uuid", "description": "Идемпотентность участника: журнал commandId -> результат"},
+    "commandType": {"type": "string"},
+    "version": {"type": "string"},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "source": {"type": "string"},
+    "sagaId": {"type": "string", "format": "uuid", "description": "Непрозрачное значение для echo, участник не интерпретирует"},
+    "businessKey": {"type": "string", "description": "Ключ корреляции и партиционирования (для заказа - orderId)"}
+  },
+  "required": ["commandId", "commandType", "version", "timestamp", "source"],
+  "additionalProperties": true
+}

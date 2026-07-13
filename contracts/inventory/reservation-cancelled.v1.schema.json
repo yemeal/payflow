@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.inventory.reservation-cancelled.v1",
+  "title": "inventory.reservation-cancelled - компенсация выполнена (orders.events)",
+  "description": "Публикуется и для несуществующего/истёкшего резерва (идемпотентность компенсации: отмена уже отсутствующего резерва - успех).",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "allOf": [{"$ref": "../envelope/event-metadata.v1.schema.json"}],
+      "properties": {"event_type": {"const": "inventory.reservation-cancelled"}},
+      "required": ["correlation"]
+    },
+    "data": {
+      "type": "object",
+      "properties": {"orderId": {"type": "string", "format": "uuid"}},
+      "required": ["orderId"],
+      "additionalProperties": true
+    }
+  },
+  "required": ["metadata", "data"]
+}

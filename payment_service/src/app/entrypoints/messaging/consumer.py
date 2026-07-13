@@ -1,8 +1,10 @@
+from typing import Callable
+
 import structlog
 from faststream import FastStream, AckPolicy
 from faststream.kafka import KafkaBroker, KafkaMessage
 from dishka_faststream import setup_dishka, FromDishka
-from pydantic import ValidationError
+from pydantic import ValidationError, BaseModel
 
 from app.infrastructure.di import create_container
 from app.core.logging import setup_logging
@@ -17,6 +19,7 @@ from app.application.exceptions.idempotency import (
     IdempotencyKeyPayloadMismatchError,
     IdempotencyStateInconsistencyError,
 )
+from app.application.ports.correlation import CommandCorrelationStoreProtocol
 from app.application.services.idempotency import IdempotencyService
 from app.application.services.payment_service import PaymentServiceProtocol
 
@@ -66,6 +69,7 @@ class CommandRouter:
         msg: dict,
         payment_service: PaymentServiceProtocol,
         idempotency_service: IdempotencyService,
+        correlations: CommandCorrelationStoreProtocol,
     ):
         entry = self._handlers.get(command_type)
         if entry is None:
@@ -79,7 +83,7 @@ class CommandRouter:
         # а не всплывает необёрнутой в NACK (иначе битый payload = poison pill,
         # который переигрывается бесконечно и блокирует партицию).
         command = schema.model_validate(msg)
-        return await handler(command, payment_service, idempotency_service)
+        return await handler(command, payment_service, idempotency_service, correlations)
 
 
 router = CommandRouter()
@@ -90,9 +94,25 @@ async def handle_process_payment_command(
     command: ProcessPaymentCommand,
     payment_service: PaymentServiceProtocol,
     idempotency_service: IdempotencyService,
+    correlations: CommandCorrelationStoreProtocol,
 ):
     idempotency_key = str(command.metadata.command_id)
 
+    # Транспортная корреляция саги (contracts/README п.1): запоминается ДО создания
+    # платежа - иначе relay успеет опубликовать событие раньше, чем correlation
+    # станет известна, и оркестратор потеряет ответ. Домен платежа о ней не знает:
+    # подставит её в конверт транспортный адаптер (CorrelationEnrichingPublisher).
+    if command.metadata.saga_id is not None and command.metadata.business_key:
+        await correlations.remember(
+            command_id=idempotency_key,
+            correlation={
+                "sagaId": str(command.metadata.saga_id),
+                "businessKey": command.metadata.business_key,
+                "commandId": idempotency_key,
+            },
+        )
+
+    # TODO **command.data
     payload = PaymentCreate(
         amount=command.data.amount,
         currency=command.data.currency,
@@ -165,6 +185,7 @@ async def process_command_message(
     msg: dict,
     payment_service: PaymentServiceProtocol,
     idempotency_service: IdempotencyService,
+    correlations: CommandCorrelationStoreProtocol,
     message: KafkaMessage | None = None,
 ) -> None:
     """
@@ -183,6 +204,7 @@ async def process_command_message(
             msg=msg,
             payment_service=payment_service,
             idempotency_service=idempotency_service,
+            correlations=correlations,
         )
     except NON_RETRIABLE_ERRORS as e:
         # невосстановимо (битые данные / неизвестная команда): в DLQ и ACK.
@@ -207,12 +229,14 @@ async def handle_commands(
     msg: dict,
     payment_service: FromDishka[PaymentServiceProtocol],
     idempotency_service: FromDishka[IdempotencyService],
+    correlations: FromDishka[CommandCorrelationStoreProtocol],
     message: KafkaMessage,
 ):
     await process_command_message(
         msg=msg,
         payment_service=payment_service,
         idempotency_service=idempotency_service,
+        correlations=correlations,
         message=message,
     )
 

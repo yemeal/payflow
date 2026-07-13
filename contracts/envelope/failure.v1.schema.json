@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.envelope.failure.v1",
+  "title": "Блок failure - обязателен в data каждого *.failed события",
+  "type": "object",
+  "properties": {
+    "code": {"type": "string", "description": "Машиночитаемый код: insufficient_stock, card_declined, provider_timeout, ..."},
+    "message": {"type": "string"},
+    "retriable": {"type": "boolean", "description": "false - бизнес-отказ (немедленная компенсация); true - технический сбой (оркестратор ретраит шаг)"}
+  },
+  "required": ["code", "message", "retriable"],
+  "additionalProperties": true
+}

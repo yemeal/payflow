@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.payments.payment-result.v1",
+  "title": "payment.completed / payment.failed (payments.events, контракт payment_service)",
+  "description": "payment.pending на том же топике оркестратор игнорирует. Для платежей, созданных командой саги, metadata.correlation обязателен (echo, персистится с платежом); события без correlation - платежи вне саг (HTTP API), оркестратор их игнорирует. failure-блок в payment.failed обязателен.",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "allOf": [{"$ref": "../envelope/event-metadata.v1.schema.json"}],
+      "properties": {"event_type": {"enum": ["payment.completed", "payment.failed"]}}
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string", "format": "uuid", "description": "ID платежа в payment_service"},
+        "customerId": {"type": "string", "description": "ID пользователя-плательщика; корреляция с сагой - только через metadata.correlation"},
+        "amount": {"type": "string", "pattern": "^\\d+(\\.\\d{1,2})?$"},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "failure": {"$ref": "../envelope/failure.v1.schema.json"}
+      },
+      "required": ["id", "customerId"],
+      "additionalProperties": true
+    }
+  },
+  "required": ["metadata", "data"],
+  "if": {"properties": {"metadata": {"properties": {"event_type": {"const": "payment.failed"}}}}},
+  "then": {"properties": {"data": {"required": ["id", "customerId", "failure"]}}}
+}

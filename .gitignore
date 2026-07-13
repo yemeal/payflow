@@ -256,3 +256,6 @@ cython_debug/
 .idea/
 
 .agents
+
+# Закрытые ключи auth_service создаются для конкретного окружения и не коммитятся.
+auth_service/secrets/private/

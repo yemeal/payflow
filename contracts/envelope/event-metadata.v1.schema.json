@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.envelope.event-metadata.v1",
+  "title": "Метаданные события (snake_case)",
+  "type": "object",
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid", "description": "Идемпотентность консюмера: дедупликация по event_id"},
+    "event_type": {"type": "string"},
+    "version": {"type": "string"},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "source": {"type": "string"},
+    "correlation": {
+      "description": "Echo метаданных команды-причины. Обязателен (объектом) во всех событиях, порождённых командой саги; у событий вне саг отсутствует или null",
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "properties": {
+            "sagaId": {"type": "string", "format": "uuid"},
+            "businessKey": {"type": "string"},
+            "commandId": {"type": "string", "format": "uuid"}
+          },
+          "required": ["sagaId", "businessKey", "commandId"],
+          "additionalProperties": true
+        }
+      ]
+    }
+  },
+  "required": ["event_id", "event_type", "version", "timestamp", "source"],
+  "additionalProperties": true
+}

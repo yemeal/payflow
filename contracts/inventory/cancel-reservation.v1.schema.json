@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payflow.contracts.inventory.cancel-reservation.v1",
+  "title": "inventory.cancel_reservation - компенсация: снять резерв (inventory.commands)",
+  "description": "Идемпотентна и коммутативна с автоистечением: отмена несуществующего или истёкшего резерва - успех (inventory.reservation-cancelled), не ошибка.",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "allOf": [{"$ref": "../envelope/command-metadata.v1.schema.json"}],
+      "properties": {"commandType": {"const": "inventory.cancel_reservation"}},
+      "required": ["sagaId", "businessKey"]
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "orderId": {"type": "string", "format": "uuid"},
+        "reason": {"type": "string"}
+      },
+      "required": ["orderId"],
+      "additionalProperties": true
+    }
+  },
+  "required": ["metadata", "data"]
+}
