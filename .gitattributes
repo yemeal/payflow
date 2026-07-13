@@ -1,0 +1,4 @@
+# Shell-скрипты всегда с LF. Иначе на Windows (core.autocrlf=true) при checkout
+# в shebang попадает CRLF, docker-entrypoint.sh становится "#!/bin/sh\r" и
+# контейнеры падают: exec /app/docker-entrypoint.sh: no such file or directory.
+*.sh text eol=lf
